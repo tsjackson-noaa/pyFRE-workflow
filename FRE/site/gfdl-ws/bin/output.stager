@@ -1,0 +1,1043 @@
+#!/bin/csh -fx
+#
+# ------------------------------------------------------------------------------
+# FMS/FRE Project: Output Stager - GFDL Workstations Version
+# ------------------------------------------------------------------------------
+# Copyright (C) NOAA Geophysical Fluid Dynamics Laboratory, 2000-2013, 2015-2017
+# Designed and written by V. Balaji, Amy Langenhorst, Aleksey Yakovlev
+# Carlo Rosati and Seth Underwood
+
+set -r echoOn = $?echo
+set -r runtimeBeg = `date "+%s"`
+
+if ( $echoOn ) unset echo
+echo '<NOTE> : ====== FRE OUTPUT STAGER ======'
+echo "<NOTE> : Starting at $HOST on `date`"
+if ( $echoOn ) set echo
+
+unalias *
+
+################################################################################
+#---------------- exit status and arguments initialization ---------------------
+################################################################################
+
+set exitStatus = 0
+
+set expName = ""
+set type = ""
+
+set actionCombineOn = 0
+set actionCheckOn = 0
+set actionSaveOn = 0
+set actionFillGridOn = 0
+
+set actionCombineOk = 0
+set actionCheckOk = 0
+set actionSaveOk = 0
+set actionFillGridOk = 0
+set gridSpec = ""
+
+set paramArchiveOn = 0
+set paramPtmpOn = 0
+set paramCheckSumOn = 0
+set paramCompressOn = 0
+set paramVerbosityOn = 0
+
+set workDir = ""
+set ptmpDir = ""
+set archDir = ""
+
+set mppnccombineOptString = ""
+
+################################################################################
+#-------------------- argument file checkup and sourcing -----------------------
+################################################################################
+
+if ( $# == 1 ) then
+   if ( "$1" != "" ) then
+      if ( $1 =~ /* ) then
+         set -r argFile = $1
+      else
+         set -r argFile = `pwd`/$1
+      endif
+   else
+      if ( $echoOn ) unset echo
+      echo "*ERROR*: The argument value is empty"
+      if ( $echoOn ) set echo
+      exit 1
+   endif
+else
+   if ( $echoOn ) unset echo
+   echo "Usage: $0:t argFile"
+   if ( $echoOn ) set echo
+   exit 1
+endif
+
+if ( -e "$argFile" ) then
+   if ( -f "$argFile" ) then
+      if ( -r "$argFile" && -w "$argFile" ) then
+         if ( $echoOn ) unset echo
+         echo "<NOTE> : Using the argFile '$argFile'..."
+         if ( $echoOn ) set echo
+         source $argFile
+      else
+         if ( $echoOn ) unset echo
+         echo "*ERROR*: The argFile '$argFile' must be readable and writable"
+         if ( $echoOn ) set echo
+         exit 1
+      endif
+   else
+      if ( $echoOn ) unset echo
+      echo "*ERROR*: The pathname '$argFile' exists, but it's not a file"
+      if ( $echoOn ) set echo
+      exit 1
+   endif
+else
+   if ( $echoOn ) unset echo
+   echo "*ERROR*: The pathname '$argFile' doesn't exist"
+   if ( $echoOn ) set echo
+   exit 1
+endif
+
+################################################################################
+#--------------------- arguments checkup (first part) --------------------------
+################################################################################
+
+if ( "$expName" != "" ) then
+   set -r expName = $expName
+   if ( $echoOn ) unset echo
+   echo "<NOTE> : expName = '$expName'"
+   if ( $echoOn ) set echo
+else
+   if ( $echoOn ) unset echo
+   echo "WARNING: Not using the 'expName' argument"
+   if ( $echoOn ) set echo
+endif
+
+if ( $type == 'ascii' || $type == 'history' || $type == 'restart' ) then
+   set -r type = $type
+   if ( $echoOn ) unset echo
+   echo "<NOTE> : type = '$type'"
+   if ( $echoOn ) set echo
+else
+   if ( $echoOn ) unset echo
+   echo "*ERROR*: The argument 'type' value must be one of 'ascii', 'history' or 'restart'"
+   if ( $echoOn ) set echo
+   set exitStatus = 2
+   goto END
+endif
+
+if ( $actionCombineOn == 0 || $actionCombineOn == 1 ) then
+   set -r actionCombineOn = $actionCombineOn
+   if ( $echoOn ) unset echo
+   echo "<NOTE> : actionCombineOn = '$actionCombineOn'"
+   if ( $echoOn ) set echo
+else
+   if ( $echoOn ) unset echo
+   echo "*ERROR*: The argument 'actionCombineOn' value must be '0' or '1'"
+   if ( $echoOn ) set echo
+   set exitStatus = 2
+   goto END
+endif
+
+if ( $actionCheckOn == 0 || $actionCheckOn == 1 ) then
+   set -r actionCheckOn = $actionCheckOn
+   if ( $echoOn ) unset echo
+   echo "<NOTE> : actionCheckOn = '$actionCheckOn'"
+   if ( $echoOn ) set echo
+else
+   if ( $echoOn ) unset echo
+   echo "*ERROR*: The argument 'actionCheckOn' value must be '0' or '1'"
+   if ( $echoOn ) set echo
+   set exitStatus = 2
+   goto END
+endif
+
+if ( $actionSaveOn == 0 || $actionSaveOn == 1 ) then
+   set -r actionSaveOn = $actionSaveOn
+   if ( $echoOn ) unset echo
+   echo "<NOTE> : actionSaveOn = '$actionSaveOn'"
+   if ( $echoOn ) set echo
+else
+   if ( $echoOn ) unset echo
+   echo "*ERROR*: The argument 'actionSaveOn' value must be '0' or '1'"
+   if ( $echoOn ) set echo
+   set exitStatus = 2
+   goto END
+endif
+
+if ( $actionFillGridOn == 0 || $actionFillGridOn == 1 ) then
+   set -r actionFillGridOn = $actionFillGridOn
+   if ( $echoOn ) unset echo
+   echo "<NOTE> : actionFillGridOn = '$actionFillGridOn'"
+   if ( $echoOn ) set echo
+else
+   if ( $echoOn ) unset echo
+   echo "*ERROR*: The argument 'actionFillGridOn' value must be '0' or '1'"
+   if ( $echoOn ) set echo
+   set exitStatus = 2
+   goto END
+endif
+
+if ( $paramArchiveOn == 0 || $paramArchiveOn == 1 ) then
+   set -r paramArchiveOn = $paramArchiveOn
+   if ( $echoOn ) unset echo
+   echo "<NOTE> : paramArchiveOn = '$paramArchiveOn'"
+   if ( $echoOn ) set echo
+else
+   if ( $echoOn ) unset echo
+   echo "*ERROR*: The argument 'paramArchiveOn' value must be '0' or '1'"
+   if ( $echoOn ) set echo
+   set exitStatus = 2
+   goto END
+endif
+
+if ( $paramPtmpOn == 0 || $paramPtmpOn == 1 ) then
+   set -r paramPtmpOn = $paramPtmpOn
+   if ( $echoOn ) unset echo
+   echo "<NOTE> : paramPtmpOn = '$paramPtmpOn'"
+   if ( $echoOn ) set echo
+else
+   if ( $echoOn ) unset echo
+   echo "*ERROR*: The argument 'paramPtmpOn' value must be '0' or '1'"
+   if ( $echoOn ) set echo
+   set exitStatus = 2
+   goto END
+endif
+
+if ( $paramCheckSumOn == 0 || $paramCheckSumOn == 1 ) then
+   set -r paramCheckSumOn = $paramCheckSumOn
+   if ( $echoOn ) unset echo
+   echo "<NOTE> : paramCheckSumOn = '$paramCheckSumOn'"
+   if ( $echoOn ) set echo
+else
+   if ( $echoOn ) unset echo
+   echo "*ERROR*: The argument 'paramCheckSumOn' value must be '0' or '1'"
+   if ( $echoOn ) set echo
+   set exitStatus = 2
+   goto END
+endif
+
+if ( $paramCompressOn == 0 || $paramCompressOn == 1 ) then
+   set -r paramCompressOn = $paramCompressOn
+   if ( $echoOn ) unset echo
+   echo "<NOTE> : paramCompressOn = '$paramCompressOn'"
+   if ( $echoOn ) set echo
+else
+   if ( $echoOn ) unset echo
+   echo "*ERROR*: The argument 'paramCompressOn' value must be '0' or '1'"
+   if ( $echoOn ) set echo
+   set exitStatus = 2
+   goto END
+endif
+
+if ( $paramVerbosityOn == 0 || $paramVerbosityOn == 1 ) then
+   set -r paramVerbosityOn = $paramVerbosityOn
+   if ( $echoOn ) unset echo
+   echo "<NOTE> : paramVerbosityOn = '$paramVerbosityOn'"
+   if ( $echoOn ) set echo
+else
+   if ( $echoOn ) unset echo
+   echo "*ERROR*: The argument 'paramVerbosityOn' value must be '0' or '1'"
+   if ( $echoOn ) set echo
+   set exitStatus = 2
+   goto END
+endif
+
+################################################################################
+#------------------------------- derived flags ---------------------------------
+################################################################################
+
+@ actionCombineToDo = ( $actionCombineOn * ! $actionCombineOk )
+@ actionCheckToDo   = ( $actionCheckOn * ! $actionCheckOk )
+@ actionSaveToDo    = ( $actionSaveOn * ( $paramArchiveOn || $paramPtmpOn ) * ! $actionSaveOk )
+@ actionFillGridToDo      = ( $actionFillGridOn * ! $actionFillGridOk )
+
+################################################################################
+#---------------------- arguments checkup (second part) ------------------------
+################################################################################
+
+if ( "$workDir" != "" ) then
+   set -r workDir = $workDir
+   if ( $echoOn ) unset echo
+   echo "<NOTE> : workDir = '$workDir'"
+   if ( $echoOn ) set echo
+else
+   if ( $echoOn ) unset echo
+   echo "WARNING: Not Using the 'workDir' argument"
+   if ( $echoOn ) set echo
+endif
+
+if ( "$ptmpDir" != "" ) then
+   set -r ptmpDir = $ptmpDir
+   if ( $echoOn ) unset echo
+   echo "<NOTE> : ptmpDir = '$ptmpDir'"
+   if ( $echoOn ) set echo
+else
+   if ( $echoOn ) unset echo
+   echo "WARNING: Not Using the 'ptmpDir' argument"
+   if ( $echoOn ) set echo
+endif
+
+if ( "$archDir" != "" ) then
+   set -r archDir = $archDir
+   if ( $echoOn ) unset echo
+   echo "<NOTE> : archDir = '$archDir'"
+   if ( $echoOn ) set echo
+else
+   if ( $echoOn ) unset echo
+   echo "WARNING: Not Using the 'archDir' argument"
+   if ( $echoOn ) set echo
+endif
+
+if ( "$mppnccombineOptString" != ""  ) then
+   set -r mppnccombineOptString = "$mppnccombineOptString"
+   if ( $echoOn ) unset echo
+   echo "<NOTE> : mppnccombineOptString = '$mppnccombineOptString'"
+   if ( $echoOn ) set echo
+else
+   set -r mppnccombineOptsDefault = '-64 -h 16384 -m'
+   if ( $echoOn ) unset echo
+   echo "WARNING: mppnccombineOptString not found, defaulting to '$mppnccombineOptsDefault'"
+   if ( $echoOn ) set echo
+   set -r mppnccombineOptString = "$mppnccombineOptsDefault"
+endif
+
+if ( "$gridSpec" != "" ) then
+   set -r gridSpec = "$gridSpec"
+   if ( $echoOn ) unset echo
+   echo "<NOTE> : gridSpec = '$gridSpec'"
+   if ( $echoOn ) set echo
+else if ( $actionFillGridToDo ) then
+   if ( $echoOn ) unset echo
+   echo "*ERROR*: gridSpec tarfile required to fill masked grid info"
+   if ( $echoOn ) set echo
+   set exitStatus = 2
+   goto END
+else
+   if ( $echoOn ) unset echo
+   echo "<Note> : Not using the 'gridSpec' argument"
+   if ( $echoOn ) set echo
+endif
+
+################################################################################
+#------------------------ global constants and aliases -------------------------
+################################################################################
+
+set -r archExt = 'tar'
+
+################################################################################
+#----------------------------------- combining ---------------------------------
+################################################################################
+
+if ( $actionCombineToDo ) then
+   set -r patternGrepTail = '\.[0-9]{4,}$'
+   set -r patternGrepRestart = '\<nc\>'
+   set -r patternGrepHistory = '\<nc\>'
+
+   set -r tagFail = 'fail'
+   set -r patternGrepFail = '\.'$tagFail'$'
+
+   alias mppnccombine `which mppnccombine` $mppnccombineOptString
+   alias slmnccombine `which combine-ncc`
+   alias slmnccompressed `which is-compressed`
+   alias slmncdecompress `which decompress-ncc`
+   alias iceberg_comb `which iceberg_comb.sh`
+
+   set -r memoryDownscalingFactor = '0.75'
+   set -r memorySpec = ( `getFreeMem` )
+   set -r combineMemory = `echo "$memorySpec * $memoryDownscalingFactor" | bc -l | xargs printf "%.0f"`
+   set -r combinesPerJob = 2
+
+   mppnccombine -V >& /dev/null
+
+   if ( $status == 0 ) then
+      if ( `mppnccombine -V |& head -1 | cut --delimiter=' ' --fields=3 | sed 's/\.//g'` > 220 ) then
+         set -r mppnccombineWithBuffering
+         set -r buffersNmbMax = 100
+      endif
+   else
+      rm --force ./-V
+   endif
+
+   set srcDir = $workDir$archDir
+
+   if ( -d "$srcDir" && -r "$srcDir" && -w "$srcDir" ) then
+      pushd $srcDir
+
+      # Land restart files _MUST_ be run through combine-ncc for
+      # regression runs to put the indexes in a canonical order, so
+      # `nccmp -d` can compare them correctly.  This is only run
+      # if the land wrote out non-distributed compressed restart files.
+      if ( $type == 'restart' ) then
+         # Look for non-distributed restart files
+         set singleResFiles = ( `ls -1 | egrep "($patternGrepRestart)"'$' | sort -u` )
+         if ( $#singleResFiles > 0 ) then
+            @ counter = 1
+            set -r singleCombineTimeBeg = `date "+%s"`
+            foreach file ( $singleResFiles )
+               slmnccompressed $file
+               if ( $status == 0 ) then
+                  # Run only the compressed restart files through combine-ncc
+                  set tmpFile = `mktemp -u $file.XXXXX`
+                  ( slmnccombine $file $tmpFile && mv --force $tmpFile $file || ( touch $file.$tagFail; rm --force $tmpfile ) ) &
+               endif
+               if ( $counter < $combinesPerJob ) then
+                  @ counter++
+               else
+                  @ counter = 1
+                  wait
+               endif
+            end
+            wait
+            unset counter
+         endif
+         unset singleResFiles
+         # Also, non-distributed compressed history files should
+         # be run through combine-ncc due to decompress-ncc mysteriously
+         # failing on some fields that are all zeros.
+      else if ( $type == 'history' ) then
+         # Look for non-distributed history files
+         set singleHistFiles = ( `ls -1 | egrep "($patternGrepHistory)"'$' | sort -u` )
+         if ( $#singleHistFiles > 0 ) then
+            @ counter = 1
+            set -r singleCombineTimeBeg = `date "+%s"`
+            foreach file ( $singleHistFiles )
+               slmnccompressed $file
+               if ( $status == 0 ) then
+                  # Run only the compressed history files through combine-ncc
+                  set tmpFile = `mktemp -u $file.XXXXX`
+                  ( slmnccombine $file $tmpFile && mv --force $tmpFile $file || ( touch $file.$tagFail; rm --force $tmpfile ) ) &
+               endif
+               if ( $counter < $combinesPerJob ) then
+                  @ counter++
+               else
+                  @ counter = 1
+                  wait
+               endif
+            end
+            wait
+            unset counter
+         endif
+         unset singleHistFile
+      endif
+
+      set filesNotOK = ( `ls -1 | egrep "$patternGrepFail"` )
+
+      if ( $#filesNotOK > 0 ) then
+         foreach file ( $filesNotOK )
+            if ( $echoOn ) unset echo
+            echo "*ERROR*: A problem during combining the non-distributed compressed $type file '$file:r'"
+            if ( $echoOn ) set echo
+            rm -f $file
+         end
+         if ( $echoOn ) unset echo
+         echo "-ERROR-: Failed to combine the non-distributed compressed $type files"
+         if ( $echoOn ) set echo
+         set exitStatus = 3
+         goto END
+      else if ( $?singleCombineTimeBeg ) then
+         set -r singleCombineTimeEnd = `date "+%s"`
+         set -r singleCombineTime = `echo "$singleCombineTimeEnd - $singleCombineTimeBeg" | bc -l`
+         if ( $echoOn ) unset echo
+         echo "<NOTE> : All the non-distributed compressed $type files have been combined successfully"
+         echo "<NOTE> : Time to combine = '$singleCombineTime' (seconds)"
+         if ( $echoOn ) set echo
+      else
+         if ( $echoOn ) unset echo
+         echo "<NOTE> : No non-distributed compressed $type files needing combined have been found"
+         if ( $echoOn ) set echo
+      endif
+
+      unset filesNotOK
+
+      if ( $type == 'history' ) then
+         set filesToCombine = ( `ls -1 | egrep "($patternGrepHistory).*$patternGrepTail" | sed -r "s/$patternGrepTail//g" | sort -u` )
+      else if ( $type == 'restart' ) then
+         set filesToCombine = ( `ls -1 | egrep "($patternGrepRestart).*$patternGrepTail" | sed -r "s/$patternGrepTail//g" | sort -u` )
+      else
+         set filesToCombine = ( )
+      endif
+
+      if ( $#filesToCombine > 0 ) then
+         @ counter = 1
+         set -r combineTimeBeg = `date "+%s"`
+         foreach file ( $filesToCombine )
+            set inputFiles = ( `ls -1 | egrep "^$file$patternGrepTail"` )
+            if ( $#inputFiles > 1 ) then
+               rm --force $file
+               slmnccompressed $inputFiles[1]
+               if ( $status == 0 ) then
+                  ( slmnccombine $inputFiles $file && ( echo $inputFiles | xargs rm --force ) || touch $file.$tagFail ) &
+               else if ( ($type == 'restart' && $file =~ 'icebergs.res*.nc') || ($type == 'history' && $file =~ '*iceberg_trajectories*.nc') ) then
+                  ( iceberg_comb $inputFiles $file && ( echo $inputFiles | xargs rm --force ) || touch $file.$tagFail ) &
+               else
+                  if ( $?mppnccombineWithBuffering ) then
+                     @ memoryPerOneBuffer = `mppnccombine -x $file $inputFiles`
+                     if ( $status == 0 ) then
+                        @ buffersNmb = ( $combineMemory / ( $combinesPerJob * $memoryPerOneBuffer ) ) + 1
+                        if ( $buffersNmb > $buffersNmbMax ) @ buffersNmb = $buffersNmbMax
+                        ( mppnccombine -k $buffersNmb $file $inputFiles && ( echo $inputFiles | xargs rm --force ) || touch $file.$tagFail ) &
+                        unset buffersNmb
+                     else
+                        ( mppnccombine $file $inputFiles && ( echo $inputFiles | xargs rm --force ) || touch $file.$tagFail ) &
+                        if ( $echoOn ) unset echo
+                        echo "WARNING: Unable to determine a mppnccombine buffer memory"
+                        if ( $echoOn ) set echo
+                     endif
+                     unset memoryPerOneBuffer
+                  else
+                     ( mppnccombine $file $inputFiles && ( echo $inputFiles | xargs rm --force ) || touch $file.$tagFail ) &
+                  endif
+               endif
+               if ( $counter < $combinesPerJob ) then
+                  @ counter++
+               else
+                  @ counter = 1
+                  wait
+               endif
+            else if ( $#inputFiles > 0 ) then
+               mv --force $inputFiles[1] $file
+            endif
+            unset inputFiles
+         end
+         wait
+         unset counter
+      endif
+
+      unset filesToCombine
+
+      set filesNotOK = ( `ls -1 | egrep "$patternGrepFail"` )
+
+      if ( $#filesNotOK > 0 ) then
+         foreach file ( $filesNotOK )
+            if ( $echoOn ) unset echo
+            echo "*ERROR*: A problem during combining the $type file '$file:r'"
+            if ( $echoOn ) set echo
+            rm -f $file
+         end
+         if ( $echoOn ) unset echo
+         echo "-ERROR-: Failed to combine $type files"
+         if ( $echoOn ) set echo
+         set exitStatus = 3
+         goto END
+      else if ( $?combineTimeBeg ) then
+         set -r combineTimeEnd = `date "+%s"`
+         set -r combineTime = `echo "$combineTimeEnd - $combineTimeBeg" | bc -l`
+         if ( $echoOn ) unset echo
+         echo "<NOTE> : All the $type files have been combined successfully"
+         echo "<NOTE> : Time to combine = '$combineTime' (seconds)"
+         if ( $echoOn ) set echo
+      else
+         if ( $echoOn ) unset echo
+         echo "<NOTE> : No uncombined $type files have been found"
+         if ( $echoOn ) set echo
+      endif
+
+      unset filesNotOK
+
+      if ( $type == 'history' ) then
+         # don't decompress static_veg_out files
+         set filesToDecompress = ( `ls -1 | grep -v "\.static_veg_out\." | egrep "($patternGrepHistory)" | sort -u` )
+      else then
+         set filesToDecompress = ( )
+      endif
+
+      if ( $#filesToDecompress > 0 ) then
+         @ counter = 1
+         set -r decompressTimeBeg = `date "+%s"`
+         foreach file ( $filesToDecompress )
+            slmnccompressed $file
+            if ( $status == 0 ) then
+               set tmpFile = `mktemp -u $file.XXXXX`
+               # Use a temporary file to hold the decompressed output
+               # If the decompress is successful, the tmpFile will be moved
+               # on top of the original name
+               ( slmncdecompress $file $tmpFile && mv --force $tmpFile $file || ( touch $file.$tagFail; rm --force $tmpFile ) ) &
+            endif
+            if ( $counter < $combinesPerJob ) then
+               @ counter ++
+            else
+               @ counter = 1
+               wait
+            endif
+         end
+         wait
+         unset counter
+      endif
+
+      unset filesToDecompress
+
+      set filesNotOK = ( `ls -1 | egrep "$patternGrepFail"` )
+
+      if ( $#filesNotOK > 0 ) then
+         foreach file ( $filesNotOK )
+            if ( $echoOn ) unset echo
+            echo "*ERROR*: A problem during decompressing the $type file '$file:r'"
+            if ( $echoOn ) set echo
+            rm -f $file
+         end
+         if ( $echoOn ) unset echo
+         echo "-ERROR-: Failed to decompress $type files"
+         if ( $echoOn ) set echo
+         set exitStatus = 3
+         goto END
+      else if ( $?decompressTimeBeg ) then
+         set -r decompressTimeEnd = `date "+%s"`
+         set -r decompressTime = `echo "$decompressTimeEnd - $decompressTimeBeg" | bc -l`
+         if ( $echoOn ) unset echo
+         echo "<NOTE> : All the $type files have been decompress successfully"
+         echo "<NOTE> : Time to decompress = '$decompressTime' (seconds)"
+         if ( $echoOn ) set echo
+      else
+         if ( $echoOn ) unset echo
+         echo "<NOTE> : No decompress $type files have been found"
+         if ( $echoOn ) set echo
+      endif
+
+      unset filesNotOK
+
+      popd
+   else
+      if ( $echoOn ) unset echo
+      echo "*ERROR*: The directory '$srcDir' doesn't exist or not readable/writable"
+      if ( $echoOn ) set echo
+      set exitStatus = 2
+      goto END
+   endif
+
+   unset srcDir
+
+   set actionCombineOk = 1
+
+   echo "set actionCombineOk = 1" >> $argFile
+endif
+
+################################################################################
+#------------ swap in unmasked grid info into masked ocean_static --------------
+################################################################################
+if ( $actionFillGridToDo ) then
+   set srcDir = $workDir$archDir
+   set error_intro = "An ocean mask file was specified, so the output.stager was configured to swap in unmasked grid info into the ocean_static.nc history file."
+   set error_ending = "Alternatively, to temporarily disable this feature, change argFile actionFillGridOn = 0, or in the runscript, delete the variable flagOutputFillGridOn."
+
+   if ( -d "$srcDir" && -r "$srcDir" && -w "$srcDir" ) then
+      pushd $srcDir
+
+      # locate masked ocean_static target
+      set masked_ocean_static = ( `ls -1 | egrep "\.ocean_static\.nc"` )
+      if ( $#masked_ocean_static == 0 ) then
+         if ( $echoOn ) unset echo
+         echo "*ERROR*: $error_intro However, ocean_static.nc doesn't exist. Please add ocean_static to your diag table. $error_ending"
+         if ( $echoOn ) set echo
+         set exitStatus = 2
+         goto END
+      else if ( $#masked_ocean_static > 1 ) then
+         if ( $echoOn ) unset echo
+         echo "*ERROR*: $error_intro Unfortunately, there were multiple *.ocean_static.nc targets for unmasked lat/lon swap, but there should be just one. This shouldn't happen, so please open a help desk ticket. $error_ending"
+         if ( $echoOn ) set echo
+         set exitStatus = 2
+         goto END
+      endif
+
+      # use ocean_static_no_mask_table as reference if it exists
+      set ref_ocean_static = ( `ls -1 | egrep "\.ocean_static_no_mask_table\.nc"` )
+      if ( $#ref_ocean_static > 1 ) then
+         if ( $echoOn ) unset echo
+         echo "*ERROR*: $error_intro Unfortunately, there's more than one ocean_static_no_mask_table.nc in $srcDir, but there should be just one. This shouldn't happen, so please open a help desk ticket. $error_ending"
+         if ( $echoOn ) set echo
+         set exitStatus = 2
+         goto END
+      endif
+
+      # use ocean_static.nc in gridSpec tarfile otherwise
+      if ( $#ref_ocean_static == 0 ) then
+         tar --wildcards -xf $gridSpec '*ocean_static.nc'
+         if ( $status ) then
+            if ( $echoOn ) unset echo
+            echo "*WARNING*: $error_intro Unfortunately, we couldn't extract ocean_static.nc from $gridSpec. Please add ocean_static.nc containing unmasked grid info fields to $gridSpec."
+            if ( $echoOn ) set echo
+         else
+            set ref_ocean_static = "ocean_static.nc"
+         endif
+      endif
+
+      # do the swap
+      if ( $#masked_ocean_static == 1 && $#ref_ocean_static == 1 ) then
+         # We want to append the data from the reference file fields
+         # to the history file, but only for fields that are
+         # in the history file already. Otherwise, we'll append data fields
+         # from reference files that aren't in the history file,
+         # and end up with fields in the history file with no metadata (which isn't desired).
+         # The first ncks gets the fields in the (masked) history file,
+         # the 2nd ncks gets the fields in the reference file,
+         # and the comm -12 gets the set that are in both.
+         # I couldn't figure out how to do this without temporary files using c-shell,
+         # but could with bash
+         set common_vars = `bash -c "comm -12 \
+            <(ncks -m $masked_ocean_static | grep -E ': type' | cut -f 1 -d ' ' | sed 's/://' | sort -u) \
+            <(ncks -m $ref_ocean_static | grep -E ': type' | cut -f 1 -d ' ' | sed 's/://' | sort -u)"`
+         if ($status == 0) then
+            set common_vars = `echo $common_vars | sed 's/ /,/g'`
+            if ( $common_vars != "" ) then
+               ncks -A -m -v $common_vars $ref_ocean_static $masked_ocean_static
+               if ( $status == 0 ) then
+                  if ( $echoOn ) unset echo
+                  echo "<NOTE> : Reference ocean static $ref_ocean_static has been appended to $masked_ocean_static"
+                  if ( $echoOn ) set echo
+               else
+                  if ( $echoOn ) unset echo
+                     echo "*ERROR*: $error_intro Unfortunately, we couldn't append $ref_ocean_static into $masked_ocean_static. This shouldn't happen, so please open a help desk ticket. $error_ending"
+                  if ( $echoOn ) set echo
+               endif
+            else
+               if ( $echoOn ) unset echo
+               echo "*ERROR*: $error_intro Unfortunately the variable intersection of $masked_ocean_static and $ref_ocean_static seems to be empty. This is probably a bug, so please submit a help desk ticket. $error_ending"
+               if ( $echoOn ) set echo
+            endif
+         else
+            if ( $echoOn ) unset echo
+            echo "*ERROR*: $error_intro Unfortunately the variable intersection of $masked_ocean_static and $ref_ocean_static couldn't be determined. Please submit a help desk ticket. $error_ending"
+            if ( $echoOn ) set echo
+         endif
+         unset common_vars
+      endif
+
+      popd
+      set actionFillGridOk = 1
+      echo "set actionFillGridOk = 1" >> $argFile
+
+   else
+      if ( $echoOn ) unset echo
+      echo "*ERROR*: The directory '$srcDir' doesn't exist or not readable/writable"
+      if ( $echoOn ) set echo
+      set exitStatus = 2
+      goto END
+   endif
+endif
+
+################################################################################
+
+################################################################################
+#----------------------------------- checking ----------------------------------
+################################################################################
+
+if ( $actionCheckToDo ) then
+   set -r checkRetriesNmb = 60
+   set -r checkRetryDelay = 30
+
+   set -r patternSedProduction = 's/\/[0-9]+(\/'$type'\/[0-9]+((\.raw)?\.nc)*$)/\1/'
+   set -r patternSedRegression = 's/(pe|a|o)[0-9]+(\/'$type'\/[0-9]+((\.raw)?\.nc)*$)/\1\2/'
+
+   alias ardiff `which ardiff` -c cp
+
+   set srcDir = $workDir$archDir
+
+   if ( -d "$srcDir" && -r "$srcDir" ) then
+      set archDirMainProduction = `echo $archDir | sed -r "$patternSedProduction"`
+      set archDirMainRegression = `echo $archDir | sed -r "$patternSedRegression"`
+
+      if ( $archDirMainProduction != $archDir || $archDirMainRegression != $archDir ) then
+         if ( $archDirMainProduction != $archDir ) then
+            set archDirMain = $archDirMainProduction
+         else if ( $archDirMainRegression != $archDir ) then
+            set archDirMain = $archDirMainRegression
+         endif
+
+         @ retry = 0
+
+         while ( 1 )
+            if ( -d "$ptmpDir$archDirMain" ) then
+               if ( -r "$ptmpDir$archDirMain" ) then
+                  set filesToCompare = `ls "$ptmpDir$archDirMain"`
+                  if ( $#filesToCompare > 0 ) then
+                     set filesToCompareAreReadable = 1
+                     foreach fileToCompare ( $filesToCompare )
+                        if ( ! -r "$ptmpDir$archDirMain/$fileToCompare" ) then
+                           set filesToCompareAreReadable = 0
+                           break
+                        endif
+                     end
+                     if ( $filesToCompareAreReadable ) then
+                        set dstDirOrArchive = $ptmpDir$archDirMain
+                     else
+                        if ( $echoOn ) unset echo
+                        echo "WARNING: The $type directory '$ptmpDir$archDirMain' contains unreadable files - skipping the dual checking"
+                        if ( $echoOn ) set echo
+                        break
+                     endif
+                     unset filesToCompareAreReadable
+                  endif
+                  unset filesToCompare
+               else
+                  if ( $echoOn ) unset echo
+                  echo "WARNING: The $type directory '$ptmpDir$archDirMain' exists, but is not readable - skipping the dual checking"
+                  if ( $echoOn ) set echo
+                  break
+               endif
+            endif
+
+            if ( ! $?dstDirOrArchive ) then
+               if ( -f $archDirMain.$archExt ) then
+                  if ( -r $archDirMain.$archExt ) then
+                     set dstDirOrArchive = $archDirMain.$archExt
+                  else
+                     if ( $echoOn ) unset echo
+                     echo "WARNING: The $type archive '$archDirMain.$archExt' exists, but is not readable - skipping the dual checking"
+                     if ( $echoOn ) set echo
+                     break
+                  endif
+               endif
+            endif
+
+            if ( $?dstDirOrArchive ) then
+               set diffCommand = ( ls -1d $dstDirOrArchive $srcDir | `alias ardiff` )
+               if ( -f $dstDirOrArchive.ok ) then
+                  eval $diffCommand
+                  if ( $status == 0 ) then
+                     if ( $echoOn ) unset echo
+                     echo "<NOTE> : Archives/directories '$dstDirOrArchive' and '$srcDir' match..."
+                     if ( $echoOn ) set echo
+                  else if ( $?batch ) then
+                     if ( $echoOn ) unset echo
+                     set msg =       "WARNING: Automatic message from the job '$jobName'\n"
+                     set msg = "${msg}WARNING: -----------------------------------------------------------------------\n"
+                     set msg = "${msg}WARNING: These two $type archives/directories don't match:\n"
+                     set msg = "${msg}WARNING: \n"
+                     set msg = "${msg}WARNING: \t$dstDirOrArchive\n"
+                     set msg = "${msg}WARNING: \t$srcDir\n"
+                     set msg = "${msg}WARNING: \n"
+                     set msg = "${msg}WARNING: The job stdout:\n"
+                     set msg = "${msg}WARNING: \n"
+                     set msg = "${msg}WARNING: \t$stdoutDir/$jobName\n"
+                     set msg = "${msg}WARNING: \n"
+                     set msg = "${msg}WARNING: The command which was used:\n"
+                     set msg = "${msg}WARNING: \n"
+                     set msg = "${msg}WARNING: \t$diffCommand\n"
+                     set msg = "${msg}WARNING: \n"
+                     set msg = "${msg}WARNING: -----------------------------------------------------------------------\n"
+                     set msg = "${msg}WARNING: This message has been generated by FRE\n"
+                     set msg = "${msg}WARNING: `date`"
+                     printf "$msg" | mailx -s "Archives/directories don't match!" $USER@noaa.gov
+                     printf "$msg" | mailx -s "Archives/directories don't match!" GFDL.operations@noaa.gov
+                     printf "$msg"
+                     unset msg
+                     if ( $echoOn ) set echo
+                  else
+                     if ( $echoOn ) unset echo
+                     echo "WARNING: These two $type archives/directories don't match:"
+                     echo "WARNING: $dstDirOrArchive"
+                     echo "WARNING: $srcDir"
+                     if ( $echoOn ) set echo
+                  endif
+                  break
+               else if ( $retry < $checkRetriesNmb ) then
+                  sleep $checkRetryDelay
+                  @ retry++
+               else if ( $?batch ) then
+                  if ( $echoOn ) unset echo
+                  set msg =       "WARNING: Automatic message from the job '$jobName'\n"
+                  set msg = "${msg}WARNING: -----------------------------------------------------------------------\n"
+                  set msg = "${msg}WARNING: FRE was unable to compare these two $type archives/directories:\n"
+                  set msg = "${msg}WARNING: \n"
+                  set msg = "${msg}WARNING: \t$dstDirOrArchive\n"
+                  set msg = "${msg}WARNING: \t$srcDir\n"
+                  set msg = "${msg}WARNING: \n"
+                  set msg = "${msg}WARNING: The main run data saving was not completed in time.\n"
+                  set msg = "${msg}WARNING: \n"
+                  set msg = "${msg}WARNING: The job stdout:\n"
+                  set msg = "${msg}WARNING: \n"
+                  set msg = "${msg}WARNING: \t$stdoutDir/$jobName\n"
+                  set msg = "${msg}WARNING: \n"
+                  set msg = "${msg}WARNING: Please use this command to check that your run has reproduced the main run:\n"
+                  set msg = "${msg}WARNING: \n"
+                  set msg = "${msg}WARNING: \t$diffCommand\n"
+                  set msg = "${msg}WARNING: \n"
+                  set msg = "${msg}WARNING: -----------------------------------------------------------------------\n"
+                  set msg = "${msg}WARNING: This message has been generated by FRE\n"
+                  set msg = "${msg}WARNING: `date`"
+                  printf "$msg" | mailx -s "FRE was unable to compare $type archives/directories!" $USER@noaa.gov
+                  printf "$msg"
+                  unset msg
+                  if ( $echoOn ) set echo
+                  break
+               else
+                  if ( $echoOn ) unset echo
+                  echo "WARNING: FRE was unable to compare these two $type archives/directories:"
+                  echo "WARNING: $dstDirOrArchive"
+                  echo "WARNING: $srcDir"
+                  if ( $echoOn ) set echo
+                  break
+               endif
+               unset diffCommand
+            else if ( $retry < $checkRetriesNmb ) then
+               sleep $checkRetryDelay
+               @ retry++
+            else if ( $?batch ) then
+               if ( $echoOn ) unset echo
+               set msg =       "WARNING: Automatic message from the job '$jobName'\n"
+               set msg = "${msg}WARNING: -----------------------------------------------------------------------\n"
+               set msg = "${msg}WARNING: FRE was unable to check this $type directory:\n"
+               set msg = "${msg}WARNING: \n"
+               set msg = "${msg}WARNING: \t$srcDir\n"
+               set msg = "${msg}WARNING: \n"
+               set msg = "${msg}WARNING: The main run data was not found.\n"
+               set msg = "${msg}WARNING: \n"
+               set msg = "${msg}WARNING: The job stdout:\n"
+               set msg = "${msg}WARNING: \n"
+               set msg = "${msg}WARNING: \t$stdoutDir/$jobName\n"
+               set msg = "${msg}WARNING: \n"
+               set msg = "${msg}WARNING: -----------------------------------------------------------------------\n"
+               set msg = "${msg}WARNING: This message has been generated by FRE\n"
+               set msg = "${msg}WARNING: `date`"
+               printf "$msg" | mailx -s "FRE was unable to check the $type directory!" $USER@noaa.gov
+               printf "$msg"
+               unset msg
+               if ( $echoOn ) set echo
+               break
+            else
+               if ( $echoOn ) unset echo
+               echo "WARNING: FRE was unable to check this $type directory:"
+               echo "WARNING: $srcDir"
+               if ( $echoOn ) set echo
+               break
+            endif
+
+            unset dstDirOrArchive
+         end
+
+         unset retry
+         unset archDirMain
+      else
+         if ( $echoOn ) unset echo
+         echo "*ERROR*: The string '$archDir' doesn't conform to the unique $type directory pattern"
+         if ( $echoOn ) set echo
+         set exitStatus = 2
+         goto END
+      endif
+
+      unset archDirMainRegression
+      unset archDirMainProduction
+   else
+      if ( $echoOn ) unset echo
+      echo "*ERROR*: The directory '$srcDir' doesn't exist or not readable/writable"
+      if ( $echoOn ) set echo
+      set exitStatus = 2
+      goto END
+   endif
+
+   unset srcDir
+
+   set actionCheckOk = 1
+
+   echo "set actionCheckOk = 1" >> $argFile
+endif
+
+################################################################################
+#----------------------------------- saving ------------------------------------
+################################################################################
+
+if ( $actionSaveToDo ) then
+   alias hsmput `which hsmput` --time --workroot=$workDir --archroot=//
+
+   if ( $paramCheckSumOn ) alias hsmput `alias hsmput` --checksum
+   if ( $paramCompressOn ) alias hsmput `alias hsmput` --zip
+
+   if ( $paramArchiveOn && $paramPtmpOn ) then
+      alias hsmput `alias hsmput` --ptmproot=$ptmpDir --store=$archExt
+   else if ( $paramArchiveOn ) then
+      alias hsmput `alias hsmput` --ptmproot=$workDir --store=$archExt
+   else if ( $paramPtmpOn ) then
+      alias hsmput `alias hsmput` --ptmproot=$ptmpDir
+   endif
+
+   if ( $paramVerbosityOn ) then
+      alias hsmput `alias hsmput` --verbose
+   else
+      alias hsmput `alias hsmput` --quiet
+   endif
+
+   hsmput $archDir:s+/++
+
+   if ( $status == 0 ) then
+      if ( $paramArchiveOn ) then
+         if ( -f $archDir.$archExt && -f $archDir.$archExt.ok ) then
+            if ( $echoOn ) unset echo
+            echo "<NOTE> : The $type archive '$archDir.$archExt' has been saved successfully"
+            if ( $echoOn ) set echo
+         else
+            if ( $echoOn ) unset echo
+            echo "*ERROR*: System error during saving $type archive '$archDir.$archExt'"
+            if ( $echoOn ) set echo
+            set exitStatus = 2
+            goto END
+         endif
+      endif
+      if ( $paramPtmpOn ) then
+         if ( -d "$ptmpDir$archDir" && -f $ptmpDir$archDir.ok ) then
+            if ( $echoOn ) unset echo
+            echo "<NOTE> : The $type directory '$ptmpDir$archDir' has been saved successfully"
+            if ( $echoOn ) set echo
+         else
+            if ( $echoOn ) unset echo
+            echo "*ERROR*: System error during saving $type directory '$ptmpDir$archDir'"
+            if ( $echoOn ) set echo
+            set exitStatus = 2
+            goto END
+         endif
+      endif
+   else
+      if ( $echoOn ) unset echo
+      echo "-ERROR-: Can't save the $type directory '$archDir'"
+      if ( $echoOn ) set echo
+      set exitStatus = 3
+      goto END
+   endif
+
+   if ( ! $paramPtmpOn && $paramArchiveOn ) then
+      rm -fr $ptmpDir$archDir:h
+   endif
+
+   set actionSaveOk = 1
+
+   echo "set actionSaveOk = 1" >> $argFile
+endif
+
+################################################################################
+#----------------------------- the argFile removal -----------------------------
+################################################################################
+
+@ actionCombineDone = ( $actionCombineOn * $actionCombineOk || ! $actionCombineOn )
+@ actionFillGridDone = ( $actionFillGridOn * $actionFillGridOk || ! $actionFillGridOn)
+@ actionCheckDone   = ( $actionCheckOn   * $actionCheckOk   || ! $actionCheckOn   )
+@ actionSaveDone    = ( $actionSaveOn    * $actionSaveOk    || ! $actionSaveOn    )
+
+if ( $actionCombineDone && $actionFillGridDone && $actionCheckDone && $actionSaveDone ) rm -f $argFile
+
+unset action*Done
+
+################################################################################
+#--------------------------------- end of script -------------------------------
+################################################################################
+
+END:
+
+set -r runtimeEnd = `date "+%s"`
+set -r runtime = `echo "$runtimeEnd - $runtimeBeg" | bc -l`
+
+if ( $echoOn ) unset echo
+echo "<NOTE> : Finishing on `date`"
+echo "<NOTE> : Runtime = '$runtime' (seconds)"
+if ( $echoOn ) set echo
+
+if ( $exitStatus == 0 ) then
+   if ( $echoOn ) unset echo
+   echo "<NOTE> : Natural end of output stager script for '$expName'"
+   if ( $echoOn ) set echo
+else
+   if ( $echoOn ) unset echo
+   echo "<NOTE> : The output stager script for '$expName' failed with exit status = '$exitStatus'"
+   if ( $echoOn ) set echo
+endif
+
+exit $exitStatus
