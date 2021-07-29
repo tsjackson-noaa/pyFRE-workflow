@@ -1,0 +1,33 @@
+# Conda environment for development work; throw in anything we think we'll need
+# for now
+name: FRE-dagster-dev
+channels:
+- conda-forge
+- defaults
+dependencies:
+# base
+- python=3.8
+- pylint
+- doc8
+- jupyter
+- jupyterlab
+# execute "python -m ipykernel install --user --name=FRE-dagster-dev"
+# to register kernel
+# data munging
+- netCDF4
+- numpy
+- xarray
+- cf_xarray
+- cftime
+- cfunits
+- xesmf
+# data handling
+- intake
+- intake-esm
+# workflow
+- dask
+- dask-jobqueue
+- dagster
+- dagstermill
+- dagit
+- graphviz
