@@ -4,6 +4,7 @@ import unittest
 import unittest.mock as mock
 from src.util import filesystem as util
 from src.util import exceptions
+
 class TestCheckDirs(unittest.TestCase):
     @mock.patch('os.path.isdir', return_value = True)
     @mock.patch('os.makedirs')
@@ -244,79 +245,6 @@ class TestJSONC(unittest.TestCase):
             ('"foo": bar\\"ba', [0])
         )
 
-class TestDoubleBraceTemplate(unittest.TestCase):
-    def sub(self, template_text, template_dict=dict()):
-        tmp = util._DoubleBraceTemplate(template_text)
-        return tmp.safe_substitute(template_dict)
-
-    def test_escaped_brace_1(self):
-        self.assertEqual(self.sub('{{{{'), '{{')
-
-    def test_escaped_brace_2(self):
-        self.assertEqual(self.sub("\nfoo\t bar{{{{baz\n\n"), "\nfoo\t bar{{baz\n\n")
-
-    def test_replace_1(self):
-        self.assertEqual(self.sub("{{foo}}", {'foo': 'bar'}), "bar")
-
-    def test_replace_2(self):
-        self.assertEqual(
-            self.sub("asdf\t{{\t foo \n\t }}baz", {'foo': 'bar'}),
-            "asdf\tbarbaz"
-            )
-
-    def test_replace_3(self):
-        self.assertEqual(
-            self.sub(
-                "{{FOO}}\n{{  foo }}asdf\t{{\t FOO \n\t }}baz_{{foo}}",
-                {'foo': 'bar', 'FOO':'BAR'}
-            ),
-            "BAR\nbarasdf\tBARbaz_bar"
-            )
-
-    def test_replace_4(self):
-        self.assertEqual(
-            self.sub(
-                "]{ {{_F00}}\n{{  f00 }}as{ { }\n.d'f\t{{\t _F00 \n\t }}ba} {[z_{{f00}}",
-                {'f00': 'bar', '_F00':'BAR'}
-            ),
-            "]{ BAR\nbaras{ { }\n.d'f\tBARba} {[z_bar"
-            )
-
-    def test_ignore_1(self):
-        self.assertEqual(self.sub("{{goo}}", {'foo': 'bar'}), "{{goo}}")
-
-    def test_ignore_2(self):
-        self.assertEqual(
-            self.sub("asdf\t{{\t goo \n\t }}baz", {'foo': 'bar'}),
-            "asdf\t{{\t goo \n\t }}baz"
-            )
-
-    def test_ignore_3(self):
-        self.assertEqual(
-            self.sub(
-                "{{FOO}}\n{{  goo }}asdf\t{{\t FOO \n\t }}baz_{{goo}}",
-                {'foo': 'bar', 'FOO':'BAR'}
-            ),
-            "BAR\n{{  goo }}asdf\tBARbaz_{{goo}}"
-            )
-
-    def test_nomatch_1(self):
-        self.assertEqual(self.sub("{{foo", {'foo': 'bar'}), "{{foo")
-
-    def test_nomatch_2(self):
-        self.assertEqual(
-            self.sub("asdf\t{{\t foo \n\t }baz", {'foo': 'bar'}),
-            "asdf\t{{\t foo \n\t }baz"
-            )
-
-    def test_nomatch_3(self):
-        self.assertEqual(
-            self.sub(
-                "{{FOO\n{{  foo }asdf}}\t{{\t FOO \n\t }}baz_{{foo}}",
-                {'foo': 'bar', 'FOO':'BAR'}
-            ),
-            "{{FOO\n{{  foo }asdf}}\tBARbaz_bar"
-            )
 
 # ---------------------------------------------------
 

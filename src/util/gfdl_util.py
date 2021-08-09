@@ -5,7 +5,8 @@ import re
 import shutil
 import subprocess
 import time
-from src import util, core
+import tempfile
+from src import util
 
 import logging
 _log = logging.getLogger(__name__)
@@ -98,11 +99,10 @@ def gcp_wrapper(source_path, dest_dir, timeout=None, dry_run=None, log=_log):
     """
     modMgr = ModuleManager()
     modMgr.load('gcp')
-    config = core.ConfigManager()
     if timeout is None:
-        timeout = config.get('file_transfer_timeout', 0)
+        timeout = 0
     if dry_run is None:
-        dry_run = config.get('dry_run', False)
+        dry_run = False
 
     source_path = os.path.normpath(source_path)
     dest_dir = os.path.normpath(dest_dir)
@@ -130,44 +130,10 @@ def make_remote_dir(dest_dir, timeout=None, dry_run=None, log=_log):
         # apparently trying to test this with os.access is less robust than
         # just catching the error
         log.debug("os.makedirs at %s failed (%r); trying GCP.", dest_dir, exc)
-        tmpdirs = core.TempDirManager()
-        work_dir = tmpdirs.make_tempdir()
-        work_dir = os.path.join(work_dir, os.path.basename(dest_dir))
-        os.makedirs(work_dir)
-        gcp_wrapper(work_dir, dest_dir, timeout=timeout, dry_run=dry_run, log=log)
-
-def fetch_obs_data(source_dir, dest_dir, timeout=None, dry_run=None, log=_log):
-    """Function to fetch site-wide copy of the MDTF package observational data
-    to local disk (taken to be source_dir and dest_dir, respectively.)
-    """
-    if source_dir == dest_dir:
-        return
-    if not os.path.exists(source_dir) or not os.listdir(source_dir):
-        log.error("Empty obs data directory at '%s'.", source_dir)
-    if not os.path.exists(dest_dir) or not os.listdir(dest_dir):
-        log.debug("Empty obs data directory at '%s'.", dest_dir)
-    if running_on_PPAN():
-        log.info("\tGCPing data from {}.".format(source_dir))
-        # giving -cd to GCP, so will create dirs
-        gcp_wrapper(
-            source_dir, dest_dir, timeout=timeout, dry_run=dry_run, log=log
-        )
-    else:
-        log.info("\tSymlinking obs data dir to {}.".format(source_dir))
-        dest_parent = os.path.dirname(dest_dir)
-        if os.path.exists(dest_dir):
-            assert os.path.isdir(dest_dir)
-            try:
-                os.remove(dest_dir) # remove symlink only, not source dir
-            except OSError:
-                log.error('Expected symlink at %s', dest_dir)
-                os.rmdir(dest_dir)
-        elif not os.path.exists(dest_parent):
-            os.makedirs(dest_parent)
-        if dry_run:
-            log.info('DRY_RUN: symlink %s -> %s', source_dir, dest_dir)
-        else:
-            os.symlink(source_dir, dest_dir)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            work_dir = os.path.join(temp_dir, os.path.basename(dest_dir))
+            os.makedirs(work_dir)
+            gcp_wrapper(work_dir, dest_dir, timeout=timeout, dry_run=dry_run, log=log)
 
 def running_on_PPAN():
     """Return true if current host is in the PPAN cluster.
@@ -215,52 +181,3 @@ def frepp_freq(date_freq):
         }
         return _frepp_dict[date_freq.unit]
 
-frepp_translate = {
-    'in_data_dir': 'data_root_dir', # /pp/ directory
-    'descriptor': 'CASENAME',
-    'out_dir': 'OUTPUT_DIR',
-    'WORKDIR': 'WORKING_DIR',
-    'yr1': 'FIRSTYR',
-    'yr2': 'LASTYR'
-}
-
-def parse_frepp_stub(frepp_stub, log=_log):
-    """Converts the frepp arguments to a Python dictionary.
-
-    See `<https://wiki.gfdl.noaa.gov/index.php/FRE_User_Documentation#Automated_creation_of_diagnostic_figures>`__.
-
-    Returns: :py:obj:`dict` of frepp parameters.
-    """
-    # parse arguments and relabel keys
-    d = {}
-    regex = re.compile(r"""
-        \s*set[ ]     # initial whitespace, then 'set' followed by 1 space
-        (?P<key>\w+)  # key is simple token, no problem
-        \s+=?\s*      # separator is any whitespace, with 0 or 1 "=" signs
-        (?P<value>    # want to capture all characters to end of line, so:
-            [^=#\s]   # first character = any non-separator, or '#' for comments
-            .*        # capture everything between first and last chars
-            [^\s]     # last char = non-whitespace.
-            |[^=#\s]\b) # separate case for when value is a single character.
-        \s*$          # remainder of line must be whitespace.
-        """, re.VERBOSE)
-    for line in frepp_stub.splitlines():
-        log.debug("line = '{}'".format(line))
-        match = re.match(regex, line)
-        if match:
-            if match.group('key') in frepp_translate:
-                key = frepp_translate[match.group('key')]
-            else:
-                key = match.group('key')
-            d[key] = match.group('value')
-
-    # cast from string
-    for int_key in ['FIRSTYR', 'LASTYR', 'verbose']:
-        if int_key in d:
-            d[int_key] = int(d[int_key])
-    for bool_key in ['make_variab_tar', 'test_mode']:
-        if bool_key in d:
-            d[bool_key] = bool(d[bool_key])
-
-    d['frepp'] = (d != {})
-    return d
