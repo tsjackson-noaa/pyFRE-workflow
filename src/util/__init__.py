@@ -24,7 +24,7 @@ from .filesystem import (
     parse_json, read_json, find_json, write_json, pretty_print_json
 )
 from .processes import (
-    popen_wrapper
+    CompletedProcess, run_shell, run_command
 )
 from .gfdl_util import (
     ModuleManager, gcp_wrapper, make_remote_dir, running_on_PPAN,
