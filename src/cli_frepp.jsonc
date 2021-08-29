@@ -1,0 +1,204 @@
+// Entries here are used in framework/cli.py to configure command-line options
+// accepted by the script. Syntax is based on python's argparse library, see
+// https://docs.python.org/2.7/library/argparse.html or
+// https://docs.python.org/2.7/howto/argparse.html.
+//
+// All text to the right of an unquoted "//" is a comment and ignored, as well
+// as blank lines (JSONC quasi-standard.)
+{
+  "usage": "frepp -P|--platform platform [-AB:C:O:RY:Z:c:d:f:hlmMp:oqr:S:st:u:vx:z] experiment [experiment2 ...]",
+  "description" : "frepp is the FRE postprocessing utility.",
+  "arguments": [ // Top-level args not in any group
+    {
+      "name": "experiment",
+      "help": "experiment to create scripts for; must be found in xml file",
+      "is_positional": true,
+      "nargs" : "+",
+      "type" : "str",
+      "metavar" : "experiment"
+    }
+  ],
+  "argument_groups" : [
+    {
+      "title" : "OPTIONS FOR COMBINING MULTIPROCESSOR HISTORY FILES",
+      "arguments" : [
+        {
+          "name": "forceCombine",
+          "short_name": "f",
+          "help": "force combine of all \"raw\" history data and then exit",
+          "default": false
+        }
+      ]
+    },{
+      "title" : "OPTIONS FOR REFINING HISTORY FILES BEFORE POSTPROCESSING",
+      "arguments" : [
+        {
+          "name": "refineDiag",
+          "short_name": "D",
+          "metavar" : "<script>",
+          "help": "comma separated list of scripts to run on history data"
+        },{
+          "name": "refineDiagOnly",
+          "short_name": "H",
+          "help": "refineDiag only: do not do regular frepp processing",
+          "default": false
+        }
+      ]
+    },{
+      "title" : "OPTIONS FOR POSTPROCESSING DATA",
+      "arguments" : [
+        {
+          "name": "time",
+          "short_name": "t",
+          "metavar" : "<time>",
+          "help": "beginning of model year to process.  To process 1982, use '-t 1982' or '-t 19820101'."
+        },{
+          "name": "plus",
+          "metavar" : "<num>",
+          "help": "\"plus num years\": additional years to process"
+        },{
+          "name": "component",
+          "short_name": "c",
+          "metavar" : "<component>",
+          "help": "component to process, or keyword 'split' to process all in parallel"
+        },{
+          "name": "limitstatic",
+          "short_name": "l",
+          "help": "limit static variable processing to the diag source file in the xml",
+          "default": false
+        },{
+          "name": "dir",
+          "short_name": "d",
+          "metavar" : "<DIR>",
+          "help": "path to history data"
+        },{
+          "name": "wait",
+          "short_name": "w",
+          "metavar" : "<jobid>",
+          "help": "place hold on current job so that it waits for jobID to complete"
+        },{
+          "name": "override",
+          "short_name": "o",
+          "help": "override job dependencies",
+          "default": false
+        },{
+          "name": "compress",
+          "help": "compress pp files using NetCDF4 compression, deflation=2 and shuffle",
+          "default": false
+        }
+      ]
+    },{
+      "title" : "OPTIONS FOR ANALYSIS FIGURES",
+      "arguments" : [
+        {
+          "name": "AnalysisOnly",
+          "short_name": "A",
+          "help": "run analysis only",
+          "default": false
+        },{
+          "name": "Regenerate",
+          "short_name": "R",
+          "help": "regenerate, submit analysis scripts regardless of whether they already exist",
+          "default": false
+        },{
+          "name": "OutputFigureDir",
+          "short_name": "O",
+          "metavar" : "<DIR>",
+          "help": "where to put output figures. This argument is normally used with -A (run analysis only) and must be used if the xml file is not yours."
+        },{
+          "name": "AnalysisStartYear",
+          "short_name": "Y",
+          "metavar" : "<year>",
+          "help": "specify a four digit year as your analysis's start year, ex -Y 1984. This year overrides the startYear specified in the <analysis> tag."
+        },{
+          "name": "AnalysisEndYear",
+          "short_name": "Z",
+          "metavar" : "<year>",
+          "help": "specify a four digit year as your analysis's end year, ex -Y 1985. This year overrides the endYear specified in the <analysis> tag."
+        }
+      ]
+    },{
+      "title" : "OPTIONS FOR TIMING/DEBUGGING/STATISTICS/SCHEDULING",
+      "arguments" : [
+        {
+          "name": "mail_list",
+          "metavar" : "<string>",
+          "help": "send mail to comma-separated list instead of $USER@noaa.gov"
+        },{
+          "name": "MailOnComplete",
+          "short_name": "M",
+          "help": "send mail to user when job is complete",
+          "default": false
+        },{
+          "name": "resourceManager",
+          "short_name": "m",
+          "metavar" : "<opts>",
+          "help": "Additional options to pass to the resource manager (e.g. msub, qsub, sbatch options)"
+        },{
+          "name": "opt_W",
+          "short_name": "W",
+          "metavar" : "<time>",
+          "help": "change the max wallclock time for the job, ie, -W 00:20:00"
+        },{
+          "name": "unique",
+          "short_name": "u",
+          "metavar" : "<label>",
+          "help": "specify unique output dir. frepp -u 2 yields .../pp_2/..."
+        },{
+          "name": "debug",
+          "short_name": "Q",
+          "help": "don't print the error checks into the script. For evaluating csh."
+        },{
+          "name": "quiet",
+          "short_name": "q",
+          "help": "don't print the analysis figure checks to stdout.",
+          "default": false
+        },{
+          "name": "verbose",
+          "short_name": "v",
+          "help": "verbose flag",
+          "default": false
+        },{
+          "name": "VeryVerbose",
+          "short_name": "V",
+          "help": "very verbose flag",
+          "default": false
+        },{
+          "name": "no_epmt",
+          "help": "Turn off EPMT statistics generation",
+          "default": false
+        }
+      ]
+    },{
+      "title" : "GENERAL FRE OPTIONS",
+      "arguments" : [
+        {
+          "name": "runparams",
+          "short_name": "r",
+          "metavar" : "<runparams>",
+          "help": "regression test run.  Combine netcdf files, but no further processing"
+        },{
+          "name": "submit",
+          "short_name": "s",
+          "help": "automatically submit the script to the batch scheduler",
+          "default": false
+        },{
+          "name": "platform",
+          "short_name": "p",
+          "metavar" : "<platform>",
+          "help": "platform (required)"
+        },{
+          "name": "target",
+          "short_name": "T",
+          "metavar" : "<target>",
+          "help": "target (default on PP/AN: prod)"
+        },{
+          "name": "xmlfile",
+          "short_name": "x",
+          "metavar" : "<xmlfile>",
+          "help": "specify xml file (default: ./rts.xml)"
+        }
+      ]
+    }
+  ]
+}
