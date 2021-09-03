@@ -2,8 +2,8 @@ import json
 import textwrap
 import unittest
 import unittest.mock as mock
-from src.util import filesystem as util
-from src.util import exceptions
+from pyFRE.util import filesystem as util
+from pyFRE.util import exceptions
 
 class TestCheckDirs(unittest.TestCase):
     @mock.patch('os.path.isdir', return_value = True)

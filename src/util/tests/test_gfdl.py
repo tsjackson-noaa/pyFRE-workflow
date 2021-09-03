@@ -2,7 +2,7 @@ import os
 import sys
 import unittest
 import subprocess
-import src.util.gfdl_util as gfdl_util
+import pyFRE.util.gfdl_util as gfdl_util
 
 
 class TestModuleManager(unittest.TestCase):

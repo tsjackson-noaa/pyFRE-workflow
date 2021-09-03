@@ -460,7 +460,7 @@ DEFAULT_MDTF_DATACLASS_KWARGS = {'init': True, 'repr': True, 'eq': True,
     'order': False, 'unsafe_hash': False, 'frozen': False}
 
 # declaration to allow calling with and without args: python cookbook 9.6
-# https://github.com/dabeaz/python-cookbook/blob/master/src/9/defining_a_decorator_that_takes_an_optional_argument/example.py
+# https://github.com/dabeaz/python-cookbook/blob/master/pyFRE/9/defining_a_decorator_that_takes_an_optional_argument/example.py
 def mdtf_dataclass(cls=None, **deco_kwargs):
     """Wrap :py:func:`~dataclasses.dataclass` class decorator to customize
     dataclasses to provide (very) rudimentary type checking and conversion. This
@@ -527,7 +527,7 @@ def _regex_dataclass_preprocess_kwargs(self, kwargs):
 
     Raises a DataclassParseError if different regex_dataclasses (at any level of
     inheritance) try to assign different values to a field of the same name. We
-    do this by assigning to a :class:`~src.util.basic.ConsistentDict`.
+    do this by assigning to a :class:`~pyFRE.util.basic.ConsistentDict`.
     """
     new_kw = filter_dataclass(kwargs, self, init='all')
     new_kw = basic.ConsistentDict.from_struct(new_kw)

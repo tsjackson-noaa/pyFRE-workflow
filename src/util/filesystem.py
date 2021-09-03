@@ -101,8 +101,8 @@ def recursive_copy(src_files, src_root, dest_root, copy_function=None,
         if not overwrite and os.path.exists(f):
             raise OSError('{} exists.'.format(f))
         os.makedirs(os.path.normpath(os.path.dirname(f)), exist_ok=True)
-    for src, dest in zip(src_files, dest_files):
-        copy_function(src, dest)
+    for pyFRE, dest in zip(src_files, dest_files):
+        copy_function(pyFRE, dest)
 
 def check_executable(exec_name):
     """Tests if <exec_name> is found on the current $PATH.

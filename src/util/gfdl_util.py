@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import time
 import tempfile
-from src import util
+from pyFRE import util
 
 import logging
 _log = logging.getLogger(__name__)

@@ -1,7 +1,7 @@
 import unittest
 import unittest.mock as mock
-from src.util import basic as util
-from src.util import exceptions
+from pyFRE.util import basic as util
+from pyFRE.util import exceptions
 
 class TestMDTFABCMeta(unittest.TestCase):
     def test_abstract_attribute(self):

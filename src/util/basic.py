@@ -155,7 +155,7 @@ class ConsistentDict(WormDict):
         del self.data[key]
 
 class WormDefaultDict(WormDict):
-    """:class:`src.util.basic.WormDict` with :py:class:`collections.defaultdict`
+    """:class:`pyFRE.util.basic.WormDict` with :py:class:`collections.defaultdict`
     functionality.
     """
     def __init__(self, default_factory=None, *args, **kwargs):

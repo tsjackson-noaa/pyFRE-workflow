@@ -15,7 +15,7 @@ import shlex
 import re
 import textwrap
 import typing
-from src import util
+from pyFRE import util
 
 import logging
 _log = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ def read_config_files(code_root, file_name, site=""):
         site specific file (empty dict if that file isn't found) and second
         is the framework file (fatal error; exit immediately if not found.)
     """
-    src_dir = os.path.join(code_root, 'src')
+    src_dir = os.path.join(code_root, 'pyFRE')
     site_dir = os.path.join(code_root, 'sites', site)
     site_d = util.find_json(site_dir, file_name, exit_if_missing=False, log=_log)
     fmwk_d = util.find_json(src_dir, file_name, exit_if_missing=True, log=_log)
@@ -176,7 +176,7 @@ class RecordDefaultsAction(argparse.Action):
 class PathAction(RecordDefaultsAction):
     """:py:class:`~argparse.Action` that performs shell environment variable
     expansion and resolution of relative paths, using
-    :func:`src.util.filesystem.resolve_path`.
+    :func:`pyFRE.util.filesystem.resolve_path`.
     """
     call_on_defaults = True
 
@@ -568,7 +568,7 @@ DefaultsFileTypes.__doc__ = """
 """
 
 class CLIConfigManager(util.Singleton):
-    """:class:`~src.util.Singleton` to handle search, loading and parsing
+    """:class:`~pyFRE.util.Singleton` to handle search, loading and parsing
     of configuration files for the CLI and CLI default values. We encapsulate
     this functionality in its own class, instead of :class:`.MDTFArgParser` or
     its children, to try to make the code easier to understand (not out of
@@ -602,7 +602,7 @@ class CLIConfigManager(util.Singleton):
 
     @property
     def framework_dir(self):
-        return os.path.join(self.code_root, 'src')
+        return os.path.join(self.code_root, 'pyFRE')
 
     @property
     def sites_dir(self):
@@ -1014,7 +1014,7 @@ class MDTFTopLevelArgParser(MDTFArgParser):
             config_str (str): contents of the configuration file, either:
 
             1. A JSON/JSONC file of key-value pairs. This is parsed using
-                :func:`~src.util.filesystem.parse_json`.
+                :func:`~pyFRE.util.filesystem.parse_json`.
             2. A plain text file containing flags and arguments as they would
                 be passed on the command line (except shell expansions are not
                 performed). This is parsed by the :meth:`MDTFArgParser.parse_args`
@@ -1148,7 +1148,7 @@ class MDTFTopLevelArgParser(MDTFArgParser):
         """Method that assembles the top-level CLI parser. Options specific to
         the script are hard-coded here; CLI options for each subcommand are
         given in jsonc configuration files for each command which are read in
-        here. See associated documentation for :class:`~src.cli.MDTFArgParser`
+        here. See associated documentation for :class:`~pyFRE.cli.MDTFArgParser`
         for information on the configuration file mechanism.
         """
         MDTFArgParser.__init__(self,
@@ -1256,7 +1256,7 @@ class MDTFTopLevelSubcommandArgParser(MDTFTopLevelArgParser):
         """Method that assembles the top-level CLI parser. Options specific to
         the script are hard-coded here; CLI options for each subcommand are
         given in jsonc configuration files for each command which are read in
-        here. See associated documentation for :class:`~src.cli.MDTFArgParser`
+        here. See associated documentation for :class:`~pyFRE.cli.MDTFArgParser`
         for information on the configuration file mechanism.
         """
         MDTFArgParser.__init__(self,

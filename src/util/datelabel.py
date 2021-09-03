@@ -20,7 +20,7 @@ import re
 import datetime
 import operator as op
 import warnings
-from src import util
+from pyFRE import util
 
 import logging
 _log = logging.getLogger(__name__)
@@ -980,7 +980,7 @@ class DateFrequency(datetime.timedelta):
 
     def format_local(self):
         """Format frequency as used in framework's local directory hierarchy
-        (defined in :meth:`src.data_manager.DataManager.dest_path`.)
+        (defined in :meth:`pyFRE.data_manager.DataManager.dest_path`.)
         """
         if self.quantity == 1:
             if self.unit == 'mo':
