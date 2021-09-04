@@ -11,8 +11,8 @@
   "subcommands": {
     "pp": {
       "help": "frepp is the FRE postprocessing utility.",
-      "entry_point": "src.core:MDTFFramework",
-      "cli_file": "src/cli_frepp.jsonc"
+      "entry_point": "pyFRE.frepp:FREppConfig",
+      "cli_file": "pyFRE/frepp/cli_frepp.jsonc"
     }
   }
 }
