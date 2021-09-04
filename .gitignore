@@ -25,7 +25,6 @@ downloads/
 eggs/
 .eggs/
 env/
-lib/
 lib64/
 parts/
 sdist/
@@ -52,6 +51,7 @@ sites/local/*
 !sites/local/doc/
 
 # Byte-compiled / optimized / DLL files
+__pycache__
 __pycache__/
 *.py[cod]
 *$py.class
