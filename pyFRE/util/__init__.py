@@ -30,3 +30,4 @@ from .gfdl_util import (
     ModuleManager, gcp_wrapper, make_remote_dir, running_on_PPAN,
     is_on_tape_filesystem, rmtree_wrapper, frepp_freq
 )
+from .pyfre import *
