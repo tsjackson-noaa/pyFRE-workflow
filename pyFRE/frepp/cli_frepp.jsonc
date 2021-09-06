@@ -147,7 +147,8 @@
         },{
           "name": "debug",
           "short_name": "Q",
-          "help": "don't print the error checks into the script. For evaluating csh."
+          "help": "don't print the error checks into the script. For evaluating csh.",
+          "default": false
         },{
           "name": "quiet",
           "short_name": "q",
@@ -196,7 +197,38 @@
           "name": "xmlfile",
           "short_name": "x",
           "metavar" : "<xmlfile>",
-          "help": "specify xml file (default: ./rts.xml)"
+          "help": "specify xml file (default: ./rts.xml)",
+          "default": "rts.xml"
+        }
+      ]
+    },{
+      "title" : "DEBUGGING OPTIONS",
+      "arguments" : [
+        {
+          "name": "novalidate",
+          "help": "skip the XML validation",
+          "hidden" : true
+        },{
+          "name": "calendar",
+          "short_name": "C",
+          "help": "specify calendar type from coupler_nml, ie julian",
+          "hidden" : true
+        },{
+          "name": "basedate",
+          "short_name": "B",
+          "help": "specify reference date: initial date for simulation, ie \"0 0 0 0 0 0\" from diag table date or coupler_nml current_date",
+          "hidden" : true
+        },{
+          "name": "segment",
+          "short_name": "S",
+          "help": "Segment length in months.  Supports 1,2,3,4,6 or 12.",
+          "hidden" : true
+        },{
+          "name": "statistics",
+          "short_name": "z",
+          "help": "insert timing calls",
+          "default": false,
+          "hidden" : true
         }
       ]
     }

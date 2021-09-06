@@ -1,5 +1,6 @@
 """Subroutines for FRE perl to python transliteration."""
 
+import os
 import collections
 import re
 import string
@@ -7,9 +8,19 @@ from textwrap import dedent
 
 from . import basic, processes, exceptions
 
-def pl_template(cmds_template, *args, **kwargs):
+def is_writable(path):
+    """Check if filesystem says *path* is writable."""
+    return os.access(path, os.W_OK)
+
+def pl_template(cmds_template, *args, auto_escape_dollars=True, **kwargs):
     """Do perl-type string templating."""
     cmds_template = dedent(cmds_template)
+
+    if not args and not kwargs:
+        # first mode: no templating, $ aren't escaped, just concat multiline string
+        if not auto_escape_dollars:
+            cmds_template = cmds_template.replace('\$', '$')
+        return cmds_template
 
     # build dict of templating replacements
     template_vals = basic.ConsistentDict
@@ -20,11 +31,13 @@ def pl_template(cmds_template, *args, **kwargs):
             template_vals.update(arg.template_dict())
     template_vals.update(kwargs)
 
-    # Template escapes $ delimiter via $$; replaced by single $ in output
-    cmds = string.Template(cmds_template.replace('\$', '$$'))
-    if not template_vals:
-        return cmds # quicker?
-    return cmds.safe_substitute(template_vals)
+    # string.Template escapes $ delimiter as $$; replaced by single $ in output
+    if auto_escape_dollars:
+        cmds = string.Template(cmds_template.replace('\$', '$$'))
+    else:
+        # pass through '\$' as written
+        cmds = string.Template(cmds_template.replace('\$', '\$$'))
+    return cmds.substitute(template_vals)
 
 def shell(cmd, log, **kwargs):
     """Replace shell one-liners."""
