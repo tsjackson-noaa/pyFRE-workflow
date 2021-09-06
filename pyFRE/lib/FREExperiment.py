@@ -14,24 +14,15 @@ _log = logging.getLogger(__name__)
 DIRECTORIES = FREDefaults.ExperimentDirs()
 REGRESSION_SUITE = ['basic', 'restarts', 'scaling']
 
-
 # Module-scope variables -------------------------------------------------------
 
-global FREExperimentMap
+global FREExperimentMap # XXX need to carry this around in FREpp?
 FREExperimentMap = dict()
 
 # Utilities --------------------------------------------------------------------
 
 def _experimentFind(expName):
     return FREExperimentMap.get(expName, '')
-
-def _experimentDirsCreate(object):
-    for t in DIRECTORIES:
-        dirName = t + 'Dir'
-        setattr(object, dirName, object.property_(dirName))
-
-def _experimentDirsVerify(object, expName):
-    raise NotImplementedError()
 
 def _experimentCreate(className, fre, expName):
     raise NotImplementedError()
@@ -48,31 +39,7 @@ def _rankSet(refToComponentHash, refToComponent, depth):
     """Recursively set and return the component rank. Return -1 if loop is found."""
     raise NotImplementedError()
 
-def _regressionLabels(object):
-    raise NotImplementedError()
-
-def _regressionRunNode(object, label):
-    raise NotImplementedError()
-
-def _productionRunNode(object):
-    raise NotImplementedError()
-
-def _extractOverrideParams(exp, mamelistsHandle, runNode):
-    raise NotImplementedError()
-
-def _overrideRegressionNamelists(exp, namelistsHandle, runNode):
-    raise NotImplementedError()
-
-def _overrideProductionNamelists(object, namelistsHandle):
-    raise NotImplementedError()
-
 def _MPISizeCompatible(fre, namelistsHandle):
-    raise NotImplementedError()
-
-def _MPISizeParametersCompatible(exp, resources, namelistsHandle, ensembleSize):
-    raise NotImplementedError()
-
-def _MPISizeComponentEnabled(exp, namelistsHandle, componentName):
     raise NotImplementedError()
 
 def _long_component_names(fre):
@@ -83,42 +50,113 @@ def _long_component_names(fre):
     long_ = fre.property_('FRE.mpi.component.long_names').split(';')
     return dict(zip(short, long_))
 
-def _MPISizeParametersGeneric(exp, resources, namelistsHandle, ensembleSize):
-    raise NotImplementedError()
-
-def _MPISizeParameters(exp, resources, namelistsHandle):
-    raise NotImplementedError()
-
-def _regressionPostfix(exp, label, runNo, hoursFlag, segmentsNmb, monthsNmb,
-    daysNmb, hoursNmb, mpiInfo):
-    raise NotImplementedError()
-
 # ------------------------------------------------------------------------------
 
 
 @dc.dataclass
 class FREExperiment():
-    fre: FRE = None
-    name: str = None
-    node: Any = None
-    parent: Any = None
-    rootDir: str = None
-    srcDir: str = None
-    execDir: str = None
-    scriptsDir: str = None
-    stdoutDir: str = None
-    stdoutTmpDir: str = None
-    stateDir: str = None
-    workDir: str = None
-    ptmpDir: str = None
-    archiveDir: str = None
-    postProcessDir: str = None
-    analysisDir: str = None
-    includeDir: str = None
+    name: str = ""
+    rootDir: str = ""
+    srcDir: str = ""
+    execDir: str = ""
+    scriptsDir: str = ""
+    stdoutDir: str = ""
+    stdoutTmpDir: str = ""
+    stateDir: str = ""
+    workDir: str = ""
+    ptmpDir: str = ""
+    archiveDir: str = ""
+    postProcessDir: str = ""
+    analysisDir: str = ""
+    includeDir: str = ""
+
+    # additional configuration that was stored globally in frepp.pl
+    hsmfiles: str = ""
+
+    expt: str = ""
+    workdir: str = ""
+    archivedir: str = ""
+    postprocessdir: str = ""
+    analysisdir: str = ""
+    scriptsdir: str = ""
+    stdoutdir: str = ""
+    tmphistdir: str = ""
+    tempCache: str = ""
+    statedir: str = ""
+    outscriptdir: str = ""
+    aoutscriptdir: str = ""
+    histDir: str = ""
+    refinedir: str = ""
+    batch_job_name: str = ""
+    version_info: str = ""
+    this_frepp_cmd: str = ""
+    outscript: str = ""
+    ppRootDir: str = ""
+
+    aggregateTS: bool = True
+    didsomething: bool = False
+
+    def __post_init__(self):
+        # using new() for creation anyway, so use this to set defaults for
+        # fields we don't want in templating dict
+        self.fre = None
+        self.node = None
+        self.parent = None
+
+        self.ppNode = None
+
+    def template_dict(self):
+        """Dict of all configuration key:values for templating .csh fragments."""
+        return dc.asdict(self)
 
     @classmethod
     def new(cls, className, fre, expName):
         return _experimentCreate(className, fre, expName)
+
+
+    # Private methods -----------------------------------------------------------
+
+    def _experimentDirsCreate(self):
+        for t in DIRECTORIES:
+            dirName = t + 'Dir'
+            setattr(object, dirName, object.property_(dirName))
+
+    def _experimentDirsVerify(self, expName):
+        raise NotImplementedError()
+
+    def _regressionLabels(self):
+        raise NotImplementedError()
+
+    def _regressionRunNode(self, label):
+        raise NotImplementedError()
+
+    def _productionRunNode(self):
+        raise NotImplementedError()
+
+    def _extractOverrideParams(self, mamelistsHandle, runNode):
+        raise NotImplementedError()
+
+    def _overrideRegressionNamelists(self, namelistsHandle, runNode):
+        raise NotImplementedError()
+
+    def _overrideProductionNamelists(self, namelistsHandle):
+        raise NotImplementedError()
+
+    def _MPISizeParametersCompatible(self, resources, namelistsHandle, ensembleSize):
+        raise NotImplementedError()
+
+    def _MPISizeComponentEnabled(self, namelistsHandle, componentName):
+        raise NotImplementedError()
+
+    def _MPISizeParametersGeneric(self, resources, namelistsHandle, ensembleSize):
+        raise NotImplementedError()
+
+    def _MPISizeParameters(self, resources, namelistsHandle):
+        raise NotImplementedError()
+
+    def _regressionPostfix(self, label, runNo, hoursFlag, segmentsNmb, monthsNmb,
+        daysNmb, hoursNmb, mpiInfo):
+        raise NotImplementedError()
 
     # Object methods -----------------------------------------------------------
 
@@ -165,7 +203,7 @@ class FREExperiment():
         exp = self
         results = []
         while (exp and (len(results) == 0)):
-            rootNode = exp.node.findnodes(xPathRoot)->get_node(1)
+            rootNode = exp.node.findnodes(xPathRoot)->get_node(1) # XXX
             if rootNode:
                 results.append(rootNode.findnodes(xPathChildren))
             exp = exp.parent
@@ -205,7 +243,7 @@ class FREExperiment():
         following inherits"""
         exp = self
         results = []
-        while (exp):
+        while exp:
             makeSenseToCompile = exp.executableCanBeBuilt()
             results = self.fre.dataFilesMerged(exp.node, 'executable', 'file')
             if results or makeSenseToCompile:
@@ -242,7 +280,6 @@ class FREExperiment():
         inherits."""
         raise NotImplementedError()
 
-
     def extractNamelists(self):
         """Returns namelists handle, following inherits, but doesn't overwrite
         existing hash entries."""
@@ -273,7 +310,7 @@ class FREExperiment():
         exp = self
         results = []
         while (exp and not results):
-            inputNode = exp.node.findnodes('input')->get_node(1);
+            inputNode = exp.node.findnodes('input')->get_node(1) # XXX
             if inputNode:
                 results.append(self.fre.dataFilesMerged(inputNode, label, 'file' ))
             exp = exp.parent
@@ -288,7 +325,7 @@ class FREExperiment():
         exp = self
         results = []
         while (exp and not results):
-            runTimeNode = exp.node.findnodes('runtime')->get_node(1);
+            runTimeNode = exp.node.findnodes('runtime')->get_node(1) # XXX
             if runTimeNode:
                 results.append(self.fre.dataFilesMerged(runTimeNode, 'reference', 'restart'))
             exp = exp.parent
@@ -326,7 +363,6 @@ class FREExperiment():
         """Return a reference to the production run info."""
         raise NotImplementedError()
 
-    @staticmethod
     def addResourceRequestsToMpiInfo(self, fre, resources, info):
         """Convenience function used in extractProductionRunInfo and
         extractRegressionRunInfo. MPISizeParameters() generates $mpiInfo from resource

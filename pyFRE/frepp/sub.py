@@ -4,16 +4,24 @@
 import functools
 import math
 import operator
+from textwrap import dedent
+
+import pyFRE.util as util
+_template = util.pl_template # abbreviate
 
 import logging
 _log = logging.getLogger(__name__)
 
-def execute(host, command):
-    """Execute a command on the workstation that can write to archive."""
+def writescript(script, outscript, batchCmd, statefile):
+    """Write c-shell runscript, chmod, and optionally submit."""
     raise NotImplementedError()
 
 def call_frepp(abs_xml_path, outscript, component, year, depjobs, csh):
     """Set up to postprocess the following year if necessary."""
+    raise NotImplementedError()
+
+def execute(host, command):
+    """Execute a command on the workstation that can write to archive."""
     raise NotImplementedError()
 
 def form_frepp_call_for_plus_option():
@@ -36,13 +44,108 @@ def refineDiag(tmphistdir, stdoutdir, ptmpDir, basedate, refinedir, gridspec, md
     """
     raise NotImplementedError()
 
-def writescript(script, outscript, batchCmd, statefile):
-    """Write c-shell runscript, chmod, and optionally submit."""
-    raise NotImplementedError()
-
-def getTemplate(platform):
+def getTemplate(platform, workdir):
     """"""
-    raise NotImplementedError()
+    cshscripttmpl = ""
+    if platform == 'x86_64':
+        cshscripttmpl += _template("""
+            #!/bin/csh -f
+            #SBATCH --job-name
+            #SBATCH --time
+            #SBATCH --ntasks=1
+            #SBATCH --output
+            #SBATCH --chdir
+            #SBATCH --comment
+            #SBATCH --mail-type=NONE
+            #SBATCH --mail-user
+            #INFO:component=
+            #INFO:max_years=
+
+            if ( \$?SLURM_JOBID ) then
+                setenv JOB_ID \$SLURM_JOBID
+            else
+                setenv JOB_ID `mktemp -u INT-XXXXXX`
+            endif
+
+            setenv FRE_STDOUT_PATH
+            if ( -d "$workdir" ) then
+            rm -rf $workdir
+            endif
+            mkdir -p $workdir
+        """, workdir=workdir)
+
+    cshscripttmpl += _template("""
+        #=======================================================================
+        #version_info
+        #=======================================================================
+        unalias *
+        set echo
+        #get_site_config
+        ########################################################################
+        #-------------------- variables set by script --------------------------
+        ########################################################################
+        set name
+        set rtsxml
+        set work
+        set tempCache
+        set root
+        set archive
+        set scriptName
+        set oname
+        set ptmpDir
+        set histDir
+        set platform
+        set target
+        set segment_months
+        set prevjobstate
+        set statefile
+        set experID
+        set realizID
+        set runID
+        set tripleID
+
+        #platform_csh
+
+        #write_to_statefile
+
+        limit stacksize unlimited
+        setenv FMS_FRE_FREPP
+        set NCVARS = list_ncvars.csh
+        set TIMAVG = "timavg.csh -mb"
+        set PLEVEL = plevel.sh
+        set SPLITNCVARS = split_ncvars.pl
+        set MPPNCCOMBINE = mppnccombine
+        set FREGRID = fregrid
+        set checkptfile = $scriptName:t
+        set errors_found = 0
+        if (! -d $work) mkdir -p $work
+        if (! -d $tempCache) mkdir -p $tempCache
+        which ncks
+        which ncrcat
+
+        #set up HSM
+        set hsmget = "hsmget -v -m $FRE_COMMANDS_HOME/site/gfdl/hsmget.mk -t";
+        set hsmput = "hsmput -v -m $FRE_COMMANDS_HOME/site/gfdl/hsmput.mk -t";
+        if ( $?HSM_HOME ) then
+            if ( -d $HSM_HOME ) then
+                set hsmget = 'hsmget -v -t';
+                set hsmput = 'hsmput -v -t';
+            endif
+        endif
+
+        #checkpointing option to skip to certain point in script
+        set options = ( )
+        set argv = (`getopt g: $*`)
+        while ("$argv[1]" != "--")
+            switch ($argv[1])
+                case -g:
+                    set checkpt = $argv[2]; shift argv; breaksw
+            endsw
+            shift argv
+        end
+        shift argv
+    """)
+    return cshscripttmpl
 
 def epmt_transform(scriptfile):
     """"""
@@ -90,12 +193,5 @@ def createdirs(mkdircommand):
 
 def lcm(*args):
     return functools.reduce(operator.mul,args, 1) // math.gcd(args)
-gcd = math.gcm
+gcd = math.gcd
 
-def by_interval(int1, int2):
-    """Sort array by interval attribute."""
-    raise NotImplementedError()
-
-def by_chunk(int1, int2):
-    """Sort array by chunkLength attribute."""
-    raise NotImplementedError()
