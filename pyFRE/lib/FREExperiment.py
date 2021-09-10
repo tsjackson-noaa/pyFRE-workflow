@@ -71,9 +71,20 @@ class FREExperiment():
     includeDir: str = ""
 
     # additional configuration that was stored globally in frepp.pl
-    hsmfiles: str = ""
-
     expt: str = ""
+    basedate: str = ""
+    cshscripttmpl: str = ""
+    diagtablecontent: str = ""
+    batch_job_name: str = ""
+    version_info: str = ""
+    this_frepp_cmd: str = ""
+    mkdircommand: str = ""
+    statefile: str = ""
+    frepp_plus_calls: list = dc.field(default_factory=list)
+
+    aggregateTS: bool = True
+
+    # NB: paths below are not necessarily the same as their *Dir counterparts above
     workdir: str = ""
     archivedir: str = ""
     postprocessdir: str = ""
@@ -87,14 +98,9 @@ class FREExperiment():
     aoutscriptdir: str = ""
     histDir: str = ""
     refinedir: str = ""
-    batch_job_name: str = ""
-    version_info: str = ""
-    this_frepp_cmd: str = ""
     outscript: str = ""
     ppRootDir: str = ""
 
-    aggregateTS: bool = True
-    didsomething: bool = False
 
     def __post_init__(self):
         # using new() for creation anyway, so use this to set defaults for

@@ -6,13 +6,14 @@ import sys
 import dataclasses as dc
 import datetime
 import email
+import functools
 import operator as op
 import shlex
 import shutil
 import re
 from textwrap import dedent
 
-from pyFRE.lib import FRE, FREDefaults, FREExperiment, FREUtil, FREVersion
+from pyFRE.lib import FRE, FREAnalysis, FREDefaults, FREExperiment, FRETargets, FREUtil, FREVersion
 import pyFRE.util as util
 from . import logs, sub, ts_ta
 
@@ -25,17 +26,15 @@ _grepAssocFiles = """grep ':associated_files' | cut -d '"' -f2 | sed "s/\w*://g"
 _grep_netcdf_compression = """grep '_DeflateLevel' | cut -d '=' -f2 | sed s/\\;// | sort -r | head -n 1"""
 _grep_netcdf_shuffle = """grep '_Shuffle' | cut -d '=' -f2 | sed s/\\;// | sed s/\\"//g | sort -r | head -n 1"""
 
-#sort array by interval attribute
-by_interval = op.methodcaller('findvalue', '@interval')
-
-#sort array by chunkLength attribute
-by_chunk = op.methodcaller('findvalue', '@chunkLength')
-
 @dc.dataclass
 class FREppComponent():
     # XXX finish; align with XML
     component: str = ""
     dtvars: dict = dc.field(default_factory=dict)
+    sim0: str = "" # simulation start date
+    cshscript: str = ""
+    hsmfiles: str = ""
+    depyears: str = ""
 
     cubic: bool = False
     sourceGrid: str = ''
@@ -44,6 +43,20 @@ class FREppComponent():
     xyInterpOptions: str = ''
     nlat: int = None
     nlon: int = None
+
+    cpiomonTS: str = ""
+    startofrun: bool = False
+    didsomething: bool = False
+
+    def ts_ta_update(self, new_cshscript, new_hsmfiles, dep):
+        """Add commands and dependent years corresponding to a single requested
+        time series or time average.
+        """
+        self.cshscript += new_cshscript
+        if new_hsmfiles is not None: # not passed in static case
+            self.hsmfiles = self.hsmfiles + new_hsmfiles + ','
+        if dep is not None: # not passed in static case
+            self.depyears += dep
 
 
 @dc.dataclass
@@ -56,10 +69,10 @@ class FREpp():
     maxdisk: int = 0
     do_static = True
     historyfiles: str = ""
-    # dtvars: dict = dc.field(default_factory=dict)
+    # dtvars: # in FREppComponent
     basenpes: int = 1
     # aggregateTS = True # in FREExperiment
-    # didsomething = False # in FREExperiment
+    # cpt.didsomething = False # in FREppComponent
 
     absfrepp: str = ""
     relfrepp: str = ""
@@ -126,7 +139,6 @@ class FREpp():
             ("compress", "compress"),
             ("epmt", "epmt")
         )}
-        # opt.update(cli_dict)
 
         if opt['r'] and opt['D']:
             _log.warning(("Both options -r and -D are given.  The -r option takes "
@@ -383,7 +395,7 @@ def setup_expt(expt, fre, pp):
     # set whether to aggregate time series files in archive
     agg = FREUtil.getxpathval('postProcess/@archiveTimeSeries')
     if agg == 'byVariable':
-        pp.aggregateTS = False
+        exp.aggregateTS = False
 
     #set platform specific variables
     # This really should be done using the fre.properties file
@@ -467,18 +479,18 @@ def expt_loop_pre_component(fre, pp, exp):
     """Construct csh runscript from template. Second block of code in body of
     frepp loop over expts."""
     # frepp.pl l.716
-    cshscripttmpl = sub.getTemplate(pp.platform)
+    exp.cshscripttmpl = sub.getTemplate(pp.platform)
 
     # environment setup for FRE
     freCommandsHomeDir = fre.home()
     siteconfig = _template(f"""
         setenv FRE_COMMANDS_HOME_FREPP $freCommandsHomeDir
     """, freCommandsHomeDir=freCommandsHomeDir)
-    cshscripttmpl.replace('#get_site_config', siteconfig)
+    exp.cshscripttmpl.replace('#get_site_config', siteconfig)
 
     # platform_csh and check for FRE version mismatch
     if pp.platform_opt['platformcsh']:
-        fremodule = _run_shell(f"echo {os.environ['LOADEDMODULES']} | tr ':' '\n' | egrep '^fre/.+'")
+        fremodule = util.shell(f"echo {os.environ['LOADEDMODULES']} | tr ':' '\n' | egrep '^fre/.+'", log=_log)
         xmlfremodule = pp.platform_opt['platformcsh']
         fremodulecsh = []
 
@@ -512,7 +524,7 @@ def expt_loop_pre_component(fre, pp, exp):
             endif
         """, fremodule=fremodule, xmlfremodule=xmlfremodule)
 
-    cshscripttmpl = cshscripttmpl.replace('#platform_csh', platformcsh)
+    exp.cshscripttmpl = exp.cshscripttmpl.replace('#platform_csh', platformcsh)
     _subs = []
     if pp.platform == 'x86_64':
         _subs += [
@@ -541,34 +553,40 @@ def expt_loop_pre_component(fre, pp, exp):
         (r'(#SBATCH --comment).*', rf'\1=fre/{os.environ["FRE_COMMANDS_VERSION"]}')
     ]
     for _old, _new in _subs:
-        cshscripttmpl = re.sub(_old, _new, cshscripttmpl)
+        exp.cshscripttmpl = re.sub(_old, _new, exp.cshscripttmpl)
 
     # if using XTMP filesystem for PTMP location, let scheduler know via Slurm --comment directive
     # so it can set $TMPDIR accordingly
     if exp.ptmpDir.startswith('/xtmp'):
-        cshscripttmpl = re.sub(r'(#SBATCH --comment)=?(.*)', r'\1=\2,xtmp', cshscripttmpl)
+        exp.cshscripttmpl = re.sub(r'(#SBATCH --comment)=?(.*)', r'\1=\2,xtmp', exp.cshscripttmpl)
 
-    statefile = None
+    exp.statefile = None
     if pp.opt['r']:    #if a regression test, no further postprocessing
-        cshscripttmpl = re.sub(r'(#INFO:max_years=)', r'\1{pp.maxyrs}', cshscripttmpl)
-        sub.writescript(cshscripttmpl, exp.outscript,
-            f"$batchSubmit{pp.opt['w']} {pp.opt['m']}", statefile) # XXX statefile?
+        exp.cshscripttmpl = re.sub(r'(#INFO:max_years=)', r'\1{pp.maxyrs}', exp.cshscripttmpl)
+        sub.writescript(
+            exp.cshscripttmpl, exp.outscript,
+            f"{pp.platform_opt['batchSubmit']}{pp.opt['w']} {pp.opt['m']}",
+            exp.statefile
+        )
         pp.opt['w'] = ''
         return (pp, exp) # next;
 
     exp.ppNode = FREUtil.getppNode(exp.expt)
     if not pp.opt['f'] and not exp.ppNode:  #if no pp node, no further postprocessing
         if pp.platform == 'x86_64':
-            cshscripttmpl = re.sub(r'(#SBATCH --time).*', r'\1=01:00:00', cshscripttmpl)
-        cshscripttmpl = re.sub(r'(#INFO:max_years=)', r'\1{pp.maxyrs}', cshscripttmpl)
-        sub.writescript(cshscripttmpl, exp.outscript,
-            f"$batchSubmit{pp.opt['w']} {pp.opt['m']}", statefile) # XXX statefile?
+            exp.cshscripttmpl = re.sub(r'(#SBATCH --time).*', r'\1=01:00:00', exp.cshscripttmpl)
+        exp.cshscripttmpl = re.sub(r'(#INFO:max_years=)', r'\1{pp.maxyrs}', exp.cshscripttmpl)
+        sub.writescript(
+            exp.cshscripttmpl, exp.outscript,
+            f"{pp.platform_opt['batchSubmit']}{pp.opt['w']} {pp.opt['m']}",
+            exp.statefile
+        )
         pp.opt['w'] = ''
         return (pp, exp) # next;
 
     if pp.opt['M']:
-        # XXX $cshscripttmpl =~ s/(#SBATCH --mail-type=)NONE/$1END/;
-        cshscripttmpl = re.sub(r'((#SBATCH --mail-type=)', r'\1END', cshscripttmpl)
+        # XXX $exp.cshscripttmpl =~ s/(#SBATCH --mail-type=)NONE/$1END/;
+        exp.cshscripttmpl = re.sub(r'((#SBATCH --mail-type=)', r'\1END', exp.cshscripttmpl)
 
     if pp.opt['C']:
         caltype = pp.opt['C']
@@ -588,26 +606,24 @@ def expt_loop_pre_component(fre, pp, exp):
                 "referenced in your XML!"))
             _log.warning(("Using default calendar type 'julian' as couldn't "
                     "find 'coupler_nml'/'calendar' namelist value."))
-        if pp.opt["v"]:
-            _log.info(f"caltype = {caltype}")
+        _log.debug(f"caltype = {caltype}")
 
-    basedate = ""
-    diagtablecontent = exp.extractTable('diagTable').split('\n')
+    exp.basedate = ""
+    exp.diagtablecontent = exp.extractTable('diagTable').split('\n')
     if pp.opt['B']:
-        basedate = pp.opt['B']
+        exp.basedate = pp.opt['B']
     else:
-        #look in coupler_nml if basedate set to $baseDate
-        basedate = diagtablecontent[1].strip()
-        if basedate == "\$baseDate":
-            basedate = nml.namelistGet("coupler_nml")
-            if not basedate:
-                basedate = "0 0 0 0 0 0"
+        #look in coupler_nml if exp.basedate set to $baseDate
+        exp.basedate = exp.diagtablecontent[1].strip()
+        if exp.basedate == "\$baseDate":
+            exp.basedate = nml.namelistGet("coupler_nml")
+            if not exp.basedate:
+                exp.basedate = "0 0 0 0 0 0"
             else:
-                basedate = re.sub(r'.*current_date\s*=\s*(\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+)\s*(.*)',
-                    r'\1', basedate)
-                basedate = basedate.strip()
-    if pp.opt["v"]:
-        _log.info(f"basedate = {basedate}")
+                exp.basedate = re.sub(r'.*current_date\s*=\s*(\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+)\s*(.*)',
+                    r'\1', exp.basedate)
+                exp.basedate = exp.basedate.strip()
+    _log.debug(f"exp.basedate = {exp.basedate}")
 
     gridspec = exp.extractVariableFile('gridSpec')
     if not gridspec:
@@ -617,13 +633,12 @@ def expt_loop_pre_component(fre, pp, exp):
         _log.critical(f"gridSpec file does not exist: {gridspec}")
         sys.exit(1)
     else:
-        if pp.opt["v"]:
-            _log.info(f"Using gridSpec {gridspec}")
+        _log.debug(f"Using gridSpec {gridspec}")
 
     # if refineDiag run, insert refineDiag csh here
     if pp.opt['D']:
-        cshscripttmpl += sub.refineDiag(exp.tmphistdir, exp.stdoutDir,
-            exp.ptmpDir, basedate, exp.refinedir, gridspec, exp.MDBIswitch)
+        exp.cshscripttmpl += sub.refineDiag(exp.tmphistdir, exp.stdoutDir,
+            exp.ptmpDir, exp.basedate, exp.refinedir, gridspec, exp.MDBIswitch)
 
     if pp.opt['f'] or pp.opt['D']:
         #separate mppnccombine from rest of script due to splitting components
@@ -641,7 +656,7 @@ def expt_loop_pre_component(fre, pp, exp):
             next_script = next_script + exp.expt + '\n'
             next_script += logs.errorstr((f"{pp.relfrepp} had a problem creating "
                 f"next script {exp.expt}_{pp.hDate}"))
-            cshscripttmpl += next_script
+            exp.cshscripttmpl += next_script
 
         if pp.opt['f']:
             hsmf = []
@@ -657,45 +672,46 @@ def expt_loop_pre_component(fre, pp, exp):
                 exp.refinedir, exp.this_frepp_cmd,
                 ' '.join(hf), ' '.join(hsmf)
             )
-            cshscripttmpl = cshscripttmpl.replace('#hsmget_history_files', hsmget_history)
+            exp.cshscripttmpl = exp.cshscripttmpl.replace('#hsmget_history_files', hsmget_history)
             uncompress = sub.uncompress_history_csh(exp.tmphistdir)
-            cshscripttmpl = cshscripttmpl.replace('#uncompress_history_files', uncompress)
+            exp.cshscripttmpl = exp.cshscripttmpl.replace('#uncompress_history_files', uncompress)
             hf.sort()
             check_history = sub.checkHistComplete(exp.tmphistdir, hf[0],
-                exp.this_frepp_cmd, hsmf, diagtablecontent)
-            cshscripttmpl = cshscripttmpl.replace('#check_history_files', check_history)
+                exp.this_frepp_cmd, hsmf, exp.diagtablecontent)
+            exp.cshscripttmpl = exp.cshscripttmpl.replace('#check_history_files', check_history)
 
         if pp.opt['D'] and pp.opt['plus']:
             call_frepp = sub.call_frepp(pp.abs_xml_path, exp.outscript, pp.opt['c'], "")
             call_frepp += logs.errorstr((f"{pp.relfrepp} had a problem creating "
                 f"next script {exp.expt}_{pp.hDate}"))
-            cshscripttmpl += call_frepp
+            exp.cshscripttmpl += call_frepp
 
-        cshscripttmpl += logs.mailerrors(exp.outscript)
+        exp.cshscripttmpl += logs.mailerrors(exp.outscript)
         if pp.platform == 'x86_64':
-            cshscripttmpl = re.sub(r'(#SBATCH --time).*', rf'\1={pp.platform_opt["maxruntime"]}', cshscripttmpl)
-        cshscripttmpl = re.sub(r'(#INFO:max_years=)', rf'\1{pp.maxyrs}', cshscripttmpl)
-        sub.writescript(cshscripttmpl, exp.outscript,
+            exp.cshscripttmpl = re.sub(r'(#SBATCH --time).*', rf'\1={pp.platform_opt["maxruntime"]}', exp.cshscripttmpl)
+        exp.cshscripttmpl = re.sub(r'(#INFO:max_years=)', rf'\1{pp.maxyrs}', exp.cshscripttmpl)
+        sub.writescript(
+            exp.cshscripttmpl, exp.outscript,
             f"{pp.platform_opt['batchSubmit']}{pp.opt['w']} {pp.opt['m']}",
-            statefile
+            exp.statefile
         )
         pp.opt['w'] = ''
         return (pp, exp) # next;
     else:
-        cshscripttmpl = re.sub(r'set histDir = .*', rf'set histDir = {exp.tmphistdir}', cshscripttmpl)
+        exp.cshscripttmpl = re.sub(r'set histDir = .*', rf'set histDir = {exp.tmphistdir}', exp.cshscripttmpl)
 
     if not pp.opt['A']:
         writeIDorINTER = _template("""
-            echo $JOB_ID > $statefile
+            echo $JOB_ID > $exp.statefile
         """)
-        cshscripttmpl = cshscripttmpl.replace('#write_to_statefile', writeIDorINTER)
+        exp.cshscripttmpl = exp.cshscripttmpl.replace('#write_to_statefile', writeIDorINTER)
         pp.writestate = _template("""
             if ( "\$prevjobstate" == "ERROR" ) then
-                echo FATAL > \$statefile
+                echo FATAL > $statefile
             else
-                echo ERROR > \$statefile
+                echo ERROR > $statefile
             endif
-        """, auto_escape_dollars=False)
+        """, statefile=exp.statefile)
 
     checktransfer = _template("""
         if ( \$status ) then
@@ -728,9 +744,9 @@ def expt_loop_pre_component(fre, pp, exp):
     if pp.opt['A'] and not os.path.isdir(exp.ppRootDir):
         _log.critical(f"Directory {exp.ppRootDir} not found. Exiting.")
         sys.exit(1)
-    mkdircommand = ""
+    exp.mkdircommand = ""
     if not pp.opt['A']:
-        mkdircommand += f"mkdir -p {exp.ppRootDir}/.dec {exp.ppRootDir}/.checkpoint "
+        exp.mkdircommand += f"mkdir -p {exp.ppRootDir}/.dec {exp.ppRootDir}/.checkpoint "
     nocommentver = exp.version_info
     nocommentver = nocommentver.replace('#', "")
     archive_command = _template("""
@@ -747,7 +763,7 @@ def expt_loop_pre_component(fre, pp, exp):
 
         #check_history_files
     """, exp, freVersion=pp.freVersion, nocommentver=nocommentver)
-    cshscripttmpl += archive_command
+    exp.cshscripttmpl += archive_command
 
     getgridspec = f"cd \$work; dmget {gridspec}\n"
     if gridspec.endswith('cpio'):
@@ -1010,7 +1026,7 @@ def expt_loop_pre_component(fre, pp, exp):
 
     if pp.opt['A']:
         _log.info("\nANALYSIS ONLY mode, pp/ files will not be generated")
-    cshscript = cshscripttmpl
+
     ppComponentNodes = exp.ppNode.findnodes("component")
     if not ppComponentNodes:
         if pp.opt['c'] and pp.opt['c'] != 'split':
@@ -1020,12 +1036,11 @@ def expt_loop_pre_component(fre, pp, exp):
 
     # frepp.pl l.1317
     #process each component
-    return pp # XXX
+    return (pp, exp)
 
 
-# for ppcNode in ppComponentNodes:
 
-def expt_loop_post_component(pp, frepp_plus_calls):
+def expt_loop_post_component(pp, exp):
     # frepp.pl l.2438
     if not pp.opt['c']:
         _log.critical("Calling frepp without -c is no longer supported.")
@@ -1033,31 +1048,35 @@ def expt_loop_post_component(pp, frepp_plus_calls):
 
     logs.sysmailuser()
 
-    if frepp_plus_calls:
-        _N = len(frepp_plus_calls)
+    if exp.frepp_plus_calls:
+        _N = len(exp.frepp_plus_calls)
         _log.info((f"Normal frepp processing done; about to run {_N} "
             f"frepp commands for next year, due to --plus {pp.opt['plus']}"))
-        for i, cmd in enumerate(frepp_plus_calls):
+        for i, cmd in enumerate(exp.frepp_plus_calls):
             _log.info(f"\n# {i}/{_N}: {cmd}\n")
-            _run_shell(cmd)
+            util.shell(cmd, log=_log) # XXX
     # frepp.pl l.2456
-    return pp
+    return (pp, exp)
 
 # //////////////////////////////////////////////////////////////////////////////#
 # //////////////////////////////////////////////////////////////////////////////#
 # //////////////////////////////////////////////////////////////////////////////#
 # //////////////////////////////////////////////////////////////////////////////#
 # //////////////////////////////////////////////////////////////////////////////#
+
+
+# for ppcNode in ppComponentNodes:
 
 def component_loop_setup(ppcNode, fre, pp, exp):
     """Start of body of loop over each component."""
     # frepp.pl l.1319
-    frepp_plus_calls = []
-    cpiomonTS = ''
+    exp.frepp_plus_calls = []
     component = ppcNode.findvalue('@type')
     _log.debug(f"Creating script for postprocessing component '{component}'")
 
     cpt = FREppComponent(component=component) ### XXX added
+    cpt.cpiomonTS = ''
+    cpt.cshscript = exp.cshscripttmpl
 
     this_component_cmd = exp.this_frepp_cmd.replace(' -c split ', f' -c {component} ')
     checktransfer = _template("""
@@ -1083,9 +1102,9 @@ def component_loop_setup(ppcNode, fre, pp, exp):
     """, pp, component=component, this_component_cmd=this_component_cmd)
 
     if pp.opt['c']: #append component name to job and file name
-        cshscript = cshscripttmpl
+        cshscript = exp.cshscripttmpl
         origoutscript = exp.outscript
-        outscript = f"{exp.outscriptdir}/{exp.expt}_{component}_{pp.hDate}"
+        exp.outscript = f"{exp.outscriptdir}/{exp.expt}_{component}_{pp.hDate}"
         batch_job_name = exp.expt
         if pp.opt['u']:
             batch_job_name += f"_{pp.opt['u']}"
@@ -1105,12 +1124,12 @@ def component_loop_setup(ppcNode, fre, pp, exp):
             _subs += [(r'(#SBATCH --job-name.*)', r'\1\n#SBATCH --constraint=bigmem')]
         for _old, _new in _subs:
             cshscript = re.sub(_old, _new, cshscript)
-        statefile = f"{exp.statedir}/{component}.{pp.userstartyear}"
+        exp.statefile = f"{exp.statedir}/{component}.{pp.userstartyear}"
 
         #check status of this frepp year
         if not pp.opt['A']:
-            if os.exists(statefile):
-                with open(statefile, 'r') as f:
+            if os.exists(exp.statefile):
+                with open(exp.statefile, 'r') as f:
                     state = FREUtil.cleanstr(f.read())
                 _log.info((f"This year ({pp.hDate}) has a state file with state "
                     f"'{state}' for {component}."))
@@ -1123,15 +1142,15 @@ def component_loop_setup(ppcNode, fre, pp, exp):
                             f"completed for {component}."))
                         # if --plus option is used, store next year's frepp command to call at the end
                         if pp.opt['plus']:
-                            frepp_plus_calls.append(
+                            exp.frepp_plus_calls.append(
                                 sub.form_frepp_call_for_plus_option(component)
                             )
-                        return (_, frepp_plus_calls) # XXX next;
+                        return (pp, exp) # XXX next;
                 elif state == 'FATAL':
                     _log.error((f"This year ({pp.hDate}) got an error in multiple "
                         f"attempts, skipping this component.  To retry {component} "
-                        f"processing, delete the state file {statefile}"))
-                    return (_, frepp_plus_calls) # XXX next;
+                        f"processing, delete the state file {exp.statefile}"))
+                    return (pp, exp) # XXX next;
                 elif state == 'INTERACTIVE':
                     _log.info((f"This year ({pp.hDate}) was partially run interactively "
                         f"but not completed, resubmitting {component}..."))
@@ -1143,24 +1162,24 @@ def component_loop_setup(ppcNode, fre, pp, exp):
                         f"frepp attempt due to missing history data, resubmitting "
                         f"{component}..."))
                 elif not state:
-                    _log.error(f"statefile {statefile} exists but is empty, exiting.")
+                    _log.error(f"exp.statefile {exp.statefile} exists but is empty, exiting.")
                     #what if this is the -c split job? continue to other components
-                    return (_, frepp_plus_calls) # XXX next;
+                    return (pp, exp) # XXX next;
                 else:
                     #check that jobid is still running
                     jobrunning = logs.isjobrunning(state)
-                    _log.info((f"Checking state in {statefile}: {state}: jobrunning: "
+                    _log.info((f"Checking state in {exp.statefile}: {state}: jobrunning: "
                         f"{jobrunning}"))
                     if jobrunning:
                         _log.info((f"Previous frepp job ({state}) for {pp.hDate} "
                             f"still running for {component}, exiting."))
-                        return (_, frepp_plus_calls) # XXX next;
+                        return (pp, exp) # XXX next;
                     else:
                         _log.info((f"Previous frepp job for {pp.hDate} was lost, "
                             f"resubmitting {component}..."))
 
             cshscript = re.sub(r'set prevjobstate.*', rf"set prevjobstate = '{state}'", cshscript)
-            cshscript = re.sub(r'set statefile.*', rf"set statefile = '{statefile}'", cshscript)
+            cshscript = re.sub(r'set exp.statefile.*', rf"set exp.statefile = '{exp.statefile}'", cshscript)
     ## end if ($opt_c)
 
     #initialize per component
@@ -1293,7 +1312,7 @@ def component_loop_setup(ppcNode, fre, pp, exp):
         dtv = []
         dtvall = []
 
-        for dt in diagtablecontent:
+        for dt in exp.diagtablecontent:
             if not dt.startswith('#') and re.match(rf'.*,.*,\s*"(\w*)"\s*,\s*"{srcfile}"\s*,.*,.*,.*,.*', dt):
                 dtvall.append(dt)
             #omit static/instantaneous variables
@@ -1314,51 +1333,51 @@ def component_loop_setup(ppcNode, fre, pp, exp):
     startdate = ppcNode.findvalue('@start')
     if not startdate:
         startdate = exp.ppNode.findvalue('@start')
-    sim0 = ""
-    run0 = FREUtil.parseFortranDate(basedate)
+    cpt.sim0 = ""
+    run0 = FREUtil.parseFortranDate(exp.basedate)
     if startdate:
         startdate = FREUtil.padzeros(startdate)
-        sim0 = FREUtil.parseDate(startdate)
-        if not sim0:
+        cpt.sim0 = FREUtil.parseDate(startdate)
+        if not cpt.sim0:
             _log.critical(("The start date specified in the XML postProcess/component "
                 "tag is not a valid date."))
             sys.exit(1)
-        if sim0 and FREUtil.dateCmp(run0, sim0) == 1:
-            logs.mailuser((f"the {component} postprocessing start attribute ({sim0}) "
+        if cpt.sim0 and FREUtil.dateCmp(run0, cpt.sim0) == 1:
+            logs.mailuser((f"the {component} postprocessing start attribute ({cpt.sim0}) "
                 f"must be equal to or later than the start of the run ({run0}). The "
                 "default value of the start attribute is the start of the run.  "
                 "Setting the start attribute to a later date provides the ability "
                 "to skip years of data at the beginning of a run. Please check the "
                 "start attribute of all postprocessing components.\n"))
-            _log.warning((f"the {component} postprocessing start attribute ({sim0}) "
+            _log.warning((f"the {component} postprocessing start attribute ({cpt.sim0}) "
                 f"must be equal to or later than the start of the run ({run0}). The "
                 "default value of the start attribute is the start of the run.  "
                 "Setting the start attribute to a later date provides the ability "
                 "to skip years of data at the beginning of a run. Please check the "
                 "start attribute of all postprocessing components."))
         else:
-            _log.debug(f"sim0 from start attribute: {sim0}")
+            _log.debug(f"cpt.sim0 from start attribute: {cpt.sim0}")
     else:
-        sim0 = FREUtil.parseFortranDate(basedate)
-        _log.debug(f"sim0 from basedate: {sim0}")
-    if not sim0:
-        logs.mailuser(f"{pp.relfrepp} had a problem calculating sim0. Please contact Amy.")
+        cpt.sim0 = FREUtil.parseFortranDate(exp.basedate)
+        _log.debug(f"cpt.sim0 from exp.basedate: {cpt.sim0}")
+    if not cpt.sim0:
+        logs.mailuser(f"{pp.relfrepp} had a problem calculating cpt.sim0. Please contact Amy.")
         logs.sysmailuser()
-        _log.critical(f"{pp.relfrepp} had a problem calculating sim0. Please contact Amy.")
+        _log.critical(f"{pp.relfrepp} had a problem calculating cpt.sim0. Please contact Amy.")
         sys.exit(1)
-    startflag = FREUtil.dateCmp(pp.t0, sim0)
-    startofrun = False
+    startflag = FREUtil.dateCmp(pp.t0, cpt.sim0)
+    cpt.startofrun = False
     if startflag == 0:
         _log.debug(f"This is the first postprocessing of the simulation for {component}")
-        startofrun = True
+        cpt.startofrun = True
     elif startflag == -1 and not pp.opt['A']:
-        _log.debug(f"t0 < sim0, skipping {pp.t0}-{pp.tEND} for {component}")
-        return (_, frepp_plus_calls) # XXX next;
+        _log.debug(f"t0 < cpt.sim0, skipping {pp.t0}-{pp.tEND} for {component}")
+        return (pp, exp) # XXX next;
     elif startflag == 1:
-        _log.debug(f"t0 > sim0 for {component}")
+        _log.debug(f"t0 > cpt.sim0 for {component}")
     else:
-        _log.warning(f"having trouble comparing t0 to sim0 ({pp.t0},{sim0}) for {component}")
-    _log.debug(f"\tsim0 is {sim0} (from basedate or start attribute)")
+        _log.warning(f"having trouble comparing t0 to cpt.sim0 ({pp.t0},{cpt.sim0}) for {component}")
+    _log.debug(f"\tsim0 is {cpt.sim0} (from exp.basedate or start attribute)")
 
     #get simulation end date from production xml -> simEND
     simTime  = FREUtil.getxpathval('runtime/production/@simTime') #not currently used
@@ -1369,8 +1388,8 @@ def component_loop_setup(ppcNode, fre, pp, exp):
 
     if simEND < pp.tEND and not pp.opt['A']:
         if simEND < pp.t0:
-            _log.warning((f"The simulation time calculated from the basedate in your "
-                f"diag_table ({basedate}) and the simulation length from the xml ({simTime} "
+            _log.warning((f"The simulation time calculated from the exp.basedate in your "
+                f"diag_table ({exp.basedate}) and the simulation length from the xml ({simTime} "
                 f"{simUnits}) ends before this year of postprocessing ({pp.hDate})."))
             simEND = pp.tEND #simEND not currently used for anything else
         else:
@@ -1378,16 +1397,13 @@ def component_loop_setup(ppcNode, fre, pp, exp):
             _log.info(f"\tadjusting tEND to simulation end: {pp.tEND}")
 
     scriptcopy = cshscript
-    depyears = []
+    cpt.depyears = []
     standardTarget, targeterr = FRETargets.standardize(pp.opt['T'])
     # frepp.pl l.1676
 
-
-# //////////////////////////////////////////////////////////////////////////////#
-# //////////////////////////////////////////////////////////////////////////////#
 # //////////////////////////////////////////////////////////////////////////////#
 
-def timeseries_static(ppcNode):
+def timeseries_static(ppcNode, pp, exp, cpt):
     #STATIC
     # frepp.pl l.1678
     this_cshscript = ""
@@ -1399,250 +1415,165 @@ def timeseries_static(ppcNode):
     if not diag_source:
         diag_source = ppcNode.findvalue('@source')
     if not diag_source:
-        diag_source = f"{component}_month"
+        diag_source = f"{cpt.component}_month"
     if not pp.opt['l']:
         diag_source = re.sub(r'_.*', r'', diag_source)
-    staticfile = f"{exp.ppRootDir}/{component}/{component}.static.nc"
+    staticfile = f"{exp.ppRootDir}/{cpt.component}/{cpt.component}.static.nc"
     _log.debug(f"\tstatic vars from '{diag_source}'")
     if not pp.opt['A']:
         this_cshscript += sub.staticvars(diag_source, exp.ptmpDir, exp.tmphistdir, exp.refinedir)
     # frepp.pl l.1692
-    return this_cshscript
+    cpt.ts_ta_update(this_cshscript, new_hsmfiles=None, dep=None)
+    return cpt
 
-def timeaverages_monthly_setup(ppcNode):
-    #TIMEAVERAGES - MONTHLY
-    # frepp.pl l.1694
-    this_cshscript = ""
-    taNodes = sorted(ppcNode.findnodes('timeAverage[@source="monthly"]'), key=by_interval)
+# //////////////////////////////////////////////////////////////////////////////#
+
+#sort array by interval attribute
+by_interval = op.methodcaller('findvalue', '@interval')
+
+# for ta_freq in ('monthly', 'annual', 'seasonal':)
+
+def timesaverages_setup(ppcNode, ta_freq, pp, exp, cpt):
+    """Setup for loop over time averages for a given time average interval."""
+    if ta_freq == 'monthly':
+        xpath_expn = 'timeAverage[@source="monthly"]'
+    elif ta_freq == 'annual':
+        xpath_expn = 'timeAverage[@source="annual" and @interval!="1yr"]'
+    elif ta_freq == 'seasonal':
+        xpath_expn = 'timeAverage[@source="seasonal"]'
+    else:
+        raise ValueError(ta_freq)
+
+    taNodes = sorted(ppcNode.findnodes(xpath_expn), key=by_interval)
     intervals = [n.findvalue('@interval') for n in taNodes]
     diag_source = " "
 
-def timeaverages_monthly(taNode, intervals, depyears, this_cshscript):
-    # frepp.pl l.1698
-    hsmfiles = hsmfiles + sub.jpkSrcFiles(taNode) + ","
-    int, subint, dep = ts_ta.get_subint(taNode, intervals)
-    depyears += dep
-    if not subint:
-        _log.debug(f"\tmonthly av int={int} subint=history")
+    if ta_freq == 'annual':
+        # frepp.pl l.1751
+        annavnodes = ppcNode.findnodes('timeAverage[@source="annual" and @interval="1yr"]')
+        annCalcInterval = ''
+        if annavnodes:
+            taNode = ppcNode.findnodes('timeAverage[@source="annual" and @interval="1yr"]')->get_node(1) # XXX
+            annCalcInterval = taNode.findvalue('@calcInterval')
+            if not taNodes or annCalcInterval == "1yr":
+                intervals.append(annCalcInterval)
+                if not pp.opt['A']:
+                    _log.debug("\tannual av int=1yr subint=history")
+                    this_cshscript = ts_ta.annualAV1yrfromhist(taNode, cpt.sim0, 1)
+                this_cshscript += FREAnalysis.FREAnalysis(pp, exp, node=taNode, type="timeAverage", dtvarsRef=cpt.dtvars) # XXX
+                cpt.ts_ta_update(this_cshscript, new_hsmfiles=sub.jpkSrcFiles(taNode), dep=None)
     else:
-        _log.debug(f"\tmonthly av int={int} subint={subint}")
+        annavnodes = None
+        annCalcInterval = None
+
+    return [(n, ta_freq, intervals, ppcNode, annavnodes, annCalcInterval) for n in taNodes]
+
+def add_timeaverage(pp, exp, cpt, ta_loop_tuple):
+    """Common time average addition code."""
+    taNode, ta_freq, intervals, ppcNode, annavnodes, annCalcInterval = ta_loop_tuple
+    int, subint, dep = ts_ta.get_subint(taNode, intervals)
+    if not subint:
+        _log.debug(f"\t{ta_freq} av int={int} subint=history")
+    else:
+        _log.debug(f"\t{ta_freq} av int={int} subint={subint}")
+    this_cshscript = ""
     if not pp.opt['A']:
-        if subint:
-            this_cshscript += ts_ta.monthlyAVfromav(taNode, sim0, subint)
+        if ta_freq == 'annual':
+            if subint > 1:
+                this_cshscript += ts_ta.annualAVfromav(taNode, cpt.sim0, subint)
+            else:
+                this_cshscript += ts_ta.annualAVxyrfromann(taNode, cpt.sim0, ppcNode, len(annavnodes), annCalcInterval)
         else:
-            #does monthly 1year and monthly xyear, order is unimportant
-            this_cshscript += ts_ta.monthlyAVfromhist(taNode, sim0)
+            # monthly, seasonal
+            if subint:
+                this_cshscript += ts_ta.monthlyAVfromav(taNode, cpt.sim0, subint)
+            else:
+                this_cshscript += ts_ta.monthlyAVfromhist(taNode, cpt.sim0)
     this_cshscript += FREAnalysis.FREAnalysis(pp, exp, node=taNode, type="timeAverage", dtvarsRef=" ") # XXX
-    # frepp.pl l.1749
-    return (this_cshscript, depyears)
-
-def timeaverages_annual_setup(ppcNode):
-    #TIMEAVERAGES - ANNUAL
-    # frepp.pl l.1751
-    this_cshscript = ""
-    taNodes = sorted(ppcNode.findnodes('timeAverage[@source="annual" and @interval!="1yr"]'), key=by_interval)
-    intervals = [n.findvalue('@interval') for n in taNodes]
-    annavnodes = ppcNode.findnodes('timeAverage[@source="annual" and @interval="1yr"]')
-    annCalcInterval = ''
-    if annavnodes:
-        taNode = ppcNode.findnodes('timeAverage[@source="annual" and @interval="1yr"]')->get_node(1) # XXX
-        annCalcInterval = taNode.findvalue('@calcInterval')
-        if not taNodes or annCalcInterval == "1yr":
-            intervals.append(annCalcInterval)
-            hsmfiles = hsmfiles + sub.jpkSrcFiles(taNode) + ","
-            if not pp.opt['A']:
-                _log.debug("\tannual av int=1yr subint=history")
-                this_cshscript += annualAV1yrfromhist(taNode, sim0, 1)
-            this_cshscript += FREAnalysis.FREAnalysis(pp, exp, node=taNode, type="timeAverage", dtvarsRef=cpt.dtvars) # XXX
-    # frepp.pl l.1802
-
-def timeaverages_annual(taNode, intervals, dep, this_cshscript):
-    # frepp.pl l.1804
-    hsmfiles = hsmfiles + sub.jpkSrcFiles(taNode) + ","
-    int, subint, dep = ts_ta.get_subint(taNode, intervals)
-    depyears += dep
-    if not subint:
-        _log.debug(f"\tannual av int={int} subint=1")
-    else:
-        _log.debug(f"\tannual av int={int} subint={subint}")
-    if not pp.opt['A']:
-        if subint > 1:
-            this_cshscript += ts_ta.annualAVfromav(taNode, sim0, subint)
-        else:
-            this_cshscript += ts_ta.annualAVxyrfromann(taNode, sim0, ppcNode, len(annavnodes), annCalcInterval)
-    this_cshscript += FREAnalysis.FREAnalysis(pp, exp, node=taNode, type="timeAverage", dtvarsRef=cpt.dtvars) # XXX
-    # frepp.pl l.1854
-    return (this_cshscript, depyears)
-
-def timeaverages_seasonal_setup(ppcNode):
-    #TIMEAVERAGES - SEASONAL
-    # frepp.pl l.1857
-    this_cshscript = ""
-    taNodes = sorted(ppcNode.findnodes('timeAverage[@source="seasonal"]'), key=by_interval)
-    intervals = [n.findvalue('@interval') for n in taNodes]
-
-def timeaverages_seasonal(taNode, intervals, dep, this_cshscript):
-    # frepp.pl l.1860
-    hsmfiles = hsmfiles + sub.jpkSrcFiles(taNode) + ","
-    int, subint, dep = ts_ta.get_subint(taNode, intervals)
-    depyears += dep
-    if not pp.opt['A']:
-        if subint:
-            _log.debug(f"\tseasonal av int={int} subint={subint}")
-            this_cshscript += ts_ta.monthlyAVfromav(taNode, sim0, subint)
-        else:
-            _log.debug(f"\tseasonal av int={int} subint=history")
-            this_cshscript += ts_ta.monthlyAVfromhist(taNode, sim0)
-    this_cshscript += FREAnalysis.FREAnalysis(pp, exp, node=taNode, type="timeAverage", dtvarsRef=cpt.dtvars) # XXX
-    # frepp.pl l.1906
-    return (this_cshscript, depyears)
+    cpt.ts_ta_update(this_cshscript, new_hsmfiles=sub.jpkSrcFiles(taNode), dep=dep)
+    return cpt
 
 # //////////////////////////////////////////////////////////////////////////////#
+
+#sort array by chunkLength attribute
+by_chunk = op.methodcaller('findvalue', '@chunkLength')
+
+# for ts_freq in ('30min', 'hourly', '2hr', '3hr', '4hr', '6hr', '8hr', '12hr',
+#   '120hr', 'daily', 'monthly', 'annual', 'seasonal'):
+
+def timeseries_setup(ppcNode, ts_freq, pp, exp, cpt):
+    """Setup for loop over time series for a given sampling frequency."""
+    if ts_freq.endswith('min') or ts_freq.endswith('hr') or ts_freq == 'hourly':
+        #TIMESERIES - HOURLY
+        # frepp.pl l.1911
+        xpath_expn = f"timeSeries[\@freq='{ts_freq}']"
+    elif ts_freq == 'daily':
+        xpath_expn = 'timeSeries[@freq="daily" or @freq="day"]'
+    elif ts_freq == 'monthly':
+        xpath_expn = 'timeSeries[@freq="monthly" or @freq="month"]'
+    elif ts_freq == 'annual':
+        xpath_expn = 'timeSeries[@freq="annual"]'
+    elif ts_freq == 'seasonal':
+        xpath_expn = 'timeSeries[@freq="seasonal"]'
+    else:
+        raise ValueError(ts_freq)
+
+    tsNodes = sorted(ppcNode.findnodes(xpath_expn), key=by_chunk)
+    chunks = [n.findvalue('@chunkLength') for n in tsNodes]
+    diag_source = sub.diagfile(ppcNode, ts_freq)
+    return [(n, ts_freq, chunks, diag_source) for n in tsNodes]
+
+def add_timeseries(pp, exp, cpt, ts_loop_tuple):
+    """Common time series addition code."""
+    tsNode, ts_freq, chunks, diag_source = ts_loop_tuple
+
+    if ts_freq.endswith('min') or ts_freq.endswith('hr') \
+        or ts_freq in ('hourly', 'daily', 'monthly'):
+        # hourly: frepp.pl l.1915, daily: frepp.pl l.1973, monthly: frepp.pl l.2030
+        has_subchunk_func = ts_ta.TSfromts
+        no_subchunk_func = ts_ta.directTS
+    elif ts_freq == 'annual':
+        # frepp.pl l.2086
+        has_subchunk_func = ts_ta.TSfromts
+        no_subchunk_func = functools.partial(
+            ts_ta.annualTS,
+            diagtablecontent= '\n'.join(exp.diagtablecontent)
+        )
+    elif ts_freq == 'seasonal':
+        # frepp.pl l.2143
+        has_subchunk_func = ts_ta.seaTSfromts
+        no_subchunk_func = ts_ta.seasonalTS
+    else:
+        raise ValueError(ts_freq)
+
+    cl, subchunk, dep = ts_ta.get_subint(tsNode, chunks)
+    if not subchunk:
+        _log.debug(f"\t{ts_freq} ts chunklength={cl} subchunk=history")
+    else:
+        _log.debug(f"\t{ts_freq} ts chunklength={cl} subchunk={subchunk}")
+    this_cshscript = ""
+    if not pp.opt['A']:
+        if subchunk:
+            this_cshscript += has_subchunk_func(tsNode, cpt.sim0, subchunk)
+        else:
+            this_cshscript += no_subchunk_func(tsNode, cpt.sim0, cpt.startofrun)
+    this_cshscript += FREAnalysis.FREAnalysis(pp, exp, node=tsNode, type="timeSeries", dtvarsRef=cpt.dtvars) # XXX
+    cpt.ts_ta_update(this_cshscript, new_hsmfiles=sub.jpkSrcFiles(tsNode), dep=dep)
+    return cpt
+
+
 # //////////////////////////////////////////////////////////////////////////////#
-# //////////////////////////////////////////////////////////////////////////////#
-
-# for hrfeq in ('30min', 'hourly', '2hr', '3hr', '4hr', '6hr', '8hr', '12hr', '120hr'):
-
-def timeseries_hourly_setup(ppcNode, hrfeq):
-    #TIMESERIES - HOURLY
-    # frepp.pl l.1911
-    this_cshscript = ""
-    tsNodes = sorted(ppcNode.findnodes("timeSeries[\@freq='$hrfreq']"), key=by_chunk)
-    chunks = [n.findvalue('@chunkLength') for n in tsNodes]
-    diag_source = sub.diagfile(ppcNode, hrfreq)
-
-def timeseries_hourly(tsNode, chunks):
-    # frepp.pl l.1915
-    hsmfiles = hsmfiles + sub.jpkSrcFiles(tsNode) + ","
-    cl, subchunk, dep = ts_ta.get_subint(tsNode, chunks)
-    depyears += dep
-    if not subchunk:
-        _log.debug(f"\t{hrfreq} ts chunklength={cl} subchunk=history")
-    else:
-        _log.debug(f"\t{hrfreq} ts chunklength={cl} subchunk={subchunk}")
-    if not pp.opt['A']:
-        if subchunk:
-            this_cshscript += ts_ta.TSfromts(tsNode, sim0, subchunk)
-        else:
-            this_cshscript += ts_ta.directTS(tsNode, sim0, startofrun)
-    this_cshscript += FREAnalysis.FREAnalysis(pp, exp, node=tsNode, type="timeSeries", dtvarsRef=cpt.dtvars) # XXX
-    # frepp.pl l.1965
-    return (this_cshscript, depyears)
-
-def timeseries_daily_setup(ppcNode):
-    #TIMESERIES - DAILY
-    # frepp.pl l.1968
-    this_cshscript = ""
-    tsNodes = sorted(ppcNode.findnodes('timeSeries[@freq="daily" or @freq="day"]'), key=by_chunk)
-    chunks = [n.findvalue('@chunkLength') for n in tsNodes]
-    diag_source = sub.diagfile(ppcNode, "daily")
-
-def timeseries_daily(tsNode, chunks):
-    # frepp.pl l.1973
-    hsmfiles = hsmfiles + sub.jpkSrcFiles(tsNode) + ","
-    cl, subchunk, dep = ts_ta.get_subint(tsNode, chunks)
-    depyears += dep
-    if not subchunk:
-        _log.debug(f"\tdaily ts chunklength={cl} subchunk=history")
-    else:
-        _log.debug(f"\tdaily ts chunklength={cl} subchunk={subchunk}")
-    if not pp.opt['A']:
-        if subchunk:
-            this_cshscript += ts_ta.TSfromts(tsNode, sim0, subchunk)
-        else:
-            this_cshscript += ts_ta.directTS(tsNode, sim0, startofrun)
-    this_cshscript += FREAnalysis.FREAnalysis(pp, exp, node=tsNode, type="timeSeries", dtvarsRef=cpt.dtvars) # XXX
-    # frepp.pl l.2022
-    return (this_cshscript, depyears)
-
-def timeseries_monthly_setup(ppcNode):
-    #TIMESERIES - MONTHLY
-    # frepp.pl l.2025
-    this_cshscript = ""
-    tsNodes = sorted(ppcNode.findnodes('timeSeries[@freq="monthly" or @freq="month"]'), key=by_chunk)
-    chunks = [n.findvalue('@chunkLength') for n in tsNodes]
-    diag_source = sub.diagfile(ppcNode, "monthly")
-
-def timeseries_monthly(tsNode, chunks):
-    # frepp.pl l.2030
-    hsmfiles = hsmfiles + sub.jpkSrcFiles(tsNode) + ","
-    cl, subchunk, dep = ts_ta.get_subint(tsNode, chunks)
-    depyears += dep
-    if not subchunk:
-        _log.debug(f"\tmonthly ts chunklength={cl} subchunk=history")
-    else:
-        _log.debug(f"\tmonthly ts chunklength={cl} subchunk={subchunk}")
-    if not pp.opt['A']:
-        if subchunk:
-            this_cshscript += ts_ta.TSfromts(tsNode, sim0, subchunk)
-        else:
-            this_cshscript += ts_ta.directTS(tsNode, sim0, startofrun)
-    this_cshscript += FREAnalysis.FREAnalysis(pp, exp, node=tsNode, type="timeSeries", dtvarsRef=cpt.dtvars) # XXX
-    # frepp.pl l.2079
-    return (this_cshscript, depyears)
-
-def timeseries_annual_setup(ppcNode):
-    # frepp.pl l.2081
-    #TIMESERIES - ANNUAL
-    this_cshscript = ""
-    tsNodes = sorted(ppcNode.findnodes('timeSeries[@freq="annual"]'), key=by_chunk)
-    chunks = [n.findvalue('@chunkLength') for n in tsNodes]
-    diag_source = sub.diagfile(ppcNode, "annual", "annual")
-
-def timeseries_annual(tsNode, chunks):
-    # frepp.pl l.2086
-    hsmfiles = hsmfiles + sub.jpkSrcFiles(tsNode) + ","
-    cl, subchunk, dep = ts_ta.get_subint(tsNode, chunks)
-    depyears += dep
-    if not subchunk:
-        _log.debug(f"\tannual ts chunklength={cl} subchunk=history")
-    else:
-        _log.debug(f"\tannual ts chunklength={cl} subchunk={subchunk}")
-    if not pp.opt['A']:
-        if subchunk:
-            this_cshscript += ts_ta.TSfromts(tsNode, sim0, subchunk)
-        else:
-            this_cshscript += ts_ta.annualTS(tsNode, sim0, startofrun, '\n'.join(diagtablecontent))
-    this_cshscript += FREAnalysis.FREAnalysis(pp, exp, node=tsNode, type="timeSeries", dtvarsRef=cpt.dtvars) # XXX
-    # frepp.pl l.2136
-    return (this_cshscript, depyears)
-
-def timeseries_seasonal_setup(ppcNode):
-    #TIMESERIES - SEASONAL
-    # frepp.pl l.2139
-    this_cshscript = ""
-    tsNodes = sorted(ppcNode.findnodes('timeSeries[@freq="seasonal"]'), key=by_chunk)
-    chunks = [n.findvalue('@chunkLength') for n in tsNodes]
-    diag_source = sub.diagfile(ppcNode, "seasonal", "seasonal")
-
-def timeseries_seasonal(tsNode, chunks):
-    # frepp.pl l.2143
-    hsmfiles = hsmfiles + sub.jpkSrcFiles(tsNode) + ","
-    cl, subchunk, dep = ts_ta.get_subint(tsNode, chunks)
-    depyears += dep
-    if not subchunk:
-        _log.debug(f"\tseasonal ts chunklength={cl} subchunk=history")
-    else:
-        _log.debug(f"\tseasonal ts chunklength={cl} subchunk={subchunk}")
-    if not pp.opt['A']:
-        if subchunk:
-            this_cshscript += ts_ta.seaTSfromts(tsNode, sim0, subchunk)
-        else:
-            this_cshscript += ts_ta.seasonalTS(tsNode, sim0)
-    this_cshscript += FREAnalysis.FREAnalysis(pp, exp, node=tsNode, type="timeSeries", dtvarsRef=cpt.dtvars) # XXX
-    # frepp.pl l.2192
-    return (this_cshscript, depyears)
 
 def component_loop_dependencies(pp, exp, cpt):
     # frepp.pl l.2194
-    if didsomething:
-        didsomething = False
+    if cpt.didsomething:
+        cpt.didsomething = False
     else:
         _log.info(f"No calculations necessary for year {pp.hDate} for {cpt.omponent}.")
         # if --plus option is used, store next year's frepp command to call at the end
         if pp.opt['plus']:
-            sub.frepp_plus_calls.append(sub.form_frepp_call_for_plus_option(cpt.component))
-            return # XXX
+            exp.exp.frepp_plus_calls.append(sub.form_frepp_call_for_plus_option(cpt.component))
+            return (pp, exp) # XXX
 
     #PROCESS DEPENDENCIES
     depholds = "";
@@ -1650,9 +1581,9 @@ def component_loop_dependencies(pp, exp, cpt):
 
     if not pp.opt['A']:
         #sort, unique dependencies
-        depyears = sorted(list(set(depyears)))
-        _log.debug(f"This frepp year depends on: {depyears}")
-        for depyear in depyears:
+        cpt.depyears = sorted(list(set(cpt.depyears)))
+        _log.debug(f"This frepp year depends on: {cpt.depyears}")
+        for depyear in cpt.depyears:
             depfile  = f"{exp.statedir}/{cpt.component}.{depyear}"
             redo = False
             depstate = ''
@@ -1728,7 +1659,7 @@ def component_loop_dependencies(pp, exp, cpt):
             if redo:
                 cmd = sub.call_frepp(pp.abs_xml_path, exp.outscript, cpt.component, depyear)
                 _log.info(f"cmd")
-                frepp_submit_output = _run_shell(cmd)
+                frepp_submit_output = util.shell(cmd, log=_log)
                 _log.info(f"frepp_submit_output")
                 frepp_submit_output_last_line = frepp_submit_output.splitlines()[-1]
                 depjobid = re.match(r"Submitted batch job (\d+)", frepp_submit_output_last_line)
@@ -1759,18 +1690,18 @@ def component_loop_dependencies(pp, exp, cpt):
         pp.opt['w'] = f" --dependency=afterok:{depholds}"
         _log.info(f"Setting holds for {pp.hDate}: {pp.opt['w']}")
 
-    cshscript += logs.mailcomponent();
+    cpt.cshscript += logs.mailcomponent();
 
     #CPIO
-    if cpiomonTS and exp.aggregateTS:
-        cshscript += cpiomonTS
+    if cpt.cpiomonTS and exp.aggregateTS:
+        cpt.cshscript += cpt.cpiomonTS
 
     #END OF THIS COMPONENT; REMOVE CHECKPOINT FILE
-    cshscript += f"rm -f {exp.ppRootDir}/.checkpoint/\{checkptfile}\n"
+    cpt.cshscript += f"rm -f {exp.ppRootDir}/.checkpoint/$checkptfile\n"
 
     if pp.opt['c']:
         #set up dmget, set up to postprocess the following year if necessary, write script
-        mkdircommand = sub.createdirs(mkdircommand)
+        exp.mkdircommand = sub.createdirs(exp.mkdircommand)
         hf = sub.dmget_files()
         hsmf = sub.jpk_hsmget_files()
         if hf:
@@ -1778,36 +1709,36 @@ def component_loop_dependencies(pp, exp, cpt):
                 exp.ptmpDir, exp.tmphistdir, exp.refinedir, exp.this_frepp_cmd,
                 ' '.join(hf), ' '.join(hsmf)
             )
-            cshscript = cshscript.replace("#hsmget_history_files", hsmget_history)
+            cpt.cshscript = cpt.cshscript.replace("#hsmget_history_files", hsmget_history)
             uncompress = sub.uncompress_history_csh(exp.tmphistdir)
-            cshscript = cshscript.replace("#uncompress_history_files", uncompress)
+            cpt.cshscript = cpt.cshscript.replace("#uncompress_history_files", uncompress)
             hf.sort()
-            check_history = sub.checkHistComplete(exp.tmphistdir, hf[0], this_frepp_cmd, hsmf, diagtablecontent)
-            cshscript = cshscript.replace("#check_history_files", check_history)
-        cshscript += sub.call_frepp(exp.abs_xml_path, exp.outscript, cpt.component, "")
-        cshscript += f"echo END-OF-SCRIPT for postprocessing job {pp.t0}-{pp.tEND} for {exp.expt}\n";
+            check_history = sub.checkHistComplete(exp.tmphistdir, hf[0], exp.this_frepp_cmd, hsmf, exp.diagtablecontent)
+            cpt.cshscript = cpt.cshscript.replace("#check_history_files", check_history)
+        cpt.cshscript += sub.call_frepp(exp.abs_xml_path, exp.outscript, cpt.component, "")
+        cpt.cshscript += f"echo END-OF-SCRIPT for postprocessing job {pp.t0}-{pp.tEND} for {exp.expt}\n";
 
         # if the user sets -W, don't override the wallclock even for 1-year postprocessing
         if pp.maxyrs < 2 and not pp.opt['Walltime']:
             if pp.platform == 'x86_64':
-                cshscript = re.sub(r'(#SBATCH --time).*', r'\1=20:00:00/', cshscript)
+                cshscript = re.sub(r'(#SBATCH --time).*', r'\1=20:00:00/', cpt.cshscript)
         if pp.maxyrs >= 20:
             if pp.platform == 'x86_64':
                 cshscript = re.sub(r'(#SBATCH --time).*', rf"\1={pp.platform_opt['maxruntime']}", cshscript)
-        cshscript = re.sub(r'(#INFO:max_years=)', rf'\1{pp.maxyrs}', cshscript)
+        cpt.cshscript = re.sub(r'(#INFO:max_years=)', rf'\1{pp.maxyrs}', cpt.cshscript)
         writefinalstate = _template("""
 
             if ( \$errors_found == 0 ) then
-                echo OK > $statefile
+                echo OK > $exp.statefile
             else if ( "\$prevjobstate" == "ERROR" ) then
                 echo FATAL > $statefile
             else
                 echo ERROR > $statefile
             endif
-        """, statefile=statefile)
+        """, statefile=exp.statefile)
         if not pp.opt['A']:
             sub.writescript(cshscript, writefinalstate, exp.outscript,
-                f"{batchSubmit}{pp.opt['w']} {pp.opt['m']}", statefile)
+                f"{pp.platform_opt['batchSubmit']}{pp.opt['w']} {pp.opt['m']}", exp.statefile)
             pp.opt['w'] = ""
         # frepp.pl l.2436
-    return pp
+    return (pp, exp)
