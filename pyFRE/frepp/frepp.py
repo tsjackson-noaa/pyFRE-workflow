@@ -22,9 +22,6 @@ _log = logging.getLogger(__name__)
 
 _template = util.pl_template # abbreviate
 
-_grepAssocFiles = """grep ':associated_files' | cut -d '"' -f2 | sed "s/\w*://g" | tr ' ' '\n' | sort -u"""
-_grep_netcdf_compression = """grep '_DeflateLevel' | cut -d '=' -f2 | sed s/\\;// | sort -r | head -n 1"""
-_grep_netcdf_shuffle = """grep '_Shuffle' | cut -d '=' -f2 | sed s/\\;// | sed s/\\"//g | sort -r | head -n 1"""
 
 @dc.dataclass
 class FREppComponent():
@@ -65,7 +62,7 @@ class FREpp():
     mailList: str = ""
     perlerrors: str = ""
     component: str = ""
-    maxyrs: int = 0
+    # maxyrs: int = 0 # in FREExperiment
     maxdisk: int = 0
     do_static = True
     historyfiles: str = ""
@@ -83,6 +80,7 @@ class FREpp():
     platform: str = ""
 
     t0: str = ""
+    beginTime: int = 0
     tEnd: str = ""
     userstartyear: int = -1
     userstartmo: int = -1
@@ -143,7 +141,7 @@ class FREpp():
         if opt['r'] and opt['D']:
             _log.warning(("Both options -r and -D are given.  The -r option takes "
                 "precedence."))
-        # chomp( my $beginTime = `date +\%s` );
+        self.beginTime = util.unix_epoch()
         if opt['V']:
             opt['v'] = True
         # XXX set log level = DEBUG
@@ -355,7 +353,7 @@ def setup_expt(expt, fre, pp):
     if pp.out['O']:
         exp.aoutscriptdir = pp.out['O']
     #     my $shortxml = $abs_xml_path;
-    # $shortxml =~ s/.+\/(.+\.xml)(\.$expt\.o.+)?/$1/;
+    # $shortxml =~ s/.+\/(.+\.xml)(\.$expt\.o.+)?/$1/; # XXX
 
     if not exp.workDir:
         _log.critical("No workDir from xml")
@@ -562,11 +560,11 @@ def expt_loop_pre_component(fre, pp, exp):
 
     exp.statefile = None
     if pp.opt['r']:    #if a regression test, no further postprocessing
-        exp.cshscripttmpl = re.sub(r'(#INFO:max_years=)', r'\1{pp.maxyrs}', exp.cshscripttmpl)
+        exp.cshscripttmpl = re.sub(r'(#INFO:max_years=)', r'\1{exp.maxyrs}', exp.cshscripttmpl)
         sub.writescript(
             exp.cshscripttmpl, exp.outscript,
             f"{pp.platform_opt['batchSubmit']}{pp.opt['w']} {pp.opt['m']}",
-            exp.statefile
+            exp.statefile, pp
         )
         pp.opt['w'] = ''
         return (pp, exp) # next;
@@ -575,11 +573,11 @@ def expt_loop_pre_component(fre, pp, exp):
     if not pp.opt['f'] and not exp.ppNode:  #if no pp node, no further postprocessing
         if pp.platform == 'x86_64':
             exp.cshscripttmpl = re.sub(r'(#SBATCH --time).*', r'\1=01:00:00', exp.cshscripttmpl)
-        exp.cshscripttmpl = re.sub(r'(#INFO:max_years=)', r'\1{pp.maxyrs}', exp.cshscripttmpl)
+        exp.cshscripttmpl = re.sub(r'(#INFO:max_years=)', r'\1{exp.maxyrs}', exp.cshscripttmpl)
         sub.writescript(
             exp.cshscripttmpl, exp.outscript,
             f"{pp.platform_opt['batchSubmit']}{pp.opt['w']} {pp.opt['m']}",
-            exp.statefile
+            exp.statefile, pp
         )
         pp.opt['w'] = ''
         return (pp, exp) # next;
@@ -681,7 +679,7 @@ def expt_loop_pre_component(fre, pp, exp):
             exp.cshscripttmpl = exp.cshscripttmpl.replace('#check_history_files', check_history)
 
         if pp.opt['D'] and pp.opt['plus']:
-            call_frepp = sub.call_frepp(pp.abs_xml_path, exp.outscript, pp.opt['c'], "")
+            call_frepp = sub.call_frepp(pp.abs_xml_path, exp.outscript, pp.opt['c'], "", "", pp)
             call_frepp += logs.errorstr((f"{pp.relfrepp} had a problem creating "
                 f"next script {exp.expt}_{pp.hDate}"))
             exp.cshscripttmpl += call_frepp
@@ -689,11 +687,11 @@ def expt_loop_pre_component(fre, pp, exp):
         exp.cshscripttmpl += logs.mailerrors(exp.outscript)
         if pp.platform == 'x86_64':
             exp.cshscripttmpl = re.sub(r'(#SBATCH --time).*', rf'\1={pp.platform_opt["maxruntime"]}', exp.cshscripttmpl)
-        exp.cshscripttmpl = re.sub(r'(#INFO:max_years=)', rf'\1{pp.maxyrs}', exp.cshscripttmpl)
+        exp.cshscripttmpl = re.sub(r'(#INFO:max_years=)', rf'\1{exp.maxyrs}', exp.cshscripttmpl)
         sub.writescript(
             exp.cshscripttmpl, exp.outscript,
             f"{pp.platform_opt['batchSubmit']}{pp.opt['w']} {pp.opt['m']}",
-            exp.statefile
+            exp.statefile, pp
         )
         pp.opt['w'] = ''
         return (pp, exp) # next;
@@ -912,7 +910,7 @@ def expt_loop_pre_component(fre, pp, exp):
                 if ( ! -e `basename \$aff` ) ln -s \$aff .
             end
         end
-    """, pp, exp, checktransfer=checktransfer, grepAssocFiles=_grepAssocFiles)
+    """, pp, exp, checktransfer=checktransfer, grepAssocFiles=sub.grepAssocFiles)
     call_tile_fregrid += _template("""
         if (\$#attCmds > 0) then
             $time_ncatted ncatted -h -O \$attCmds \$fregrid_in.tile1.nc
@@ -1218,7 +1216,7 @@ def component_loop_setup(ppcNode, fre, pp, exp):
     elif gridstrings[0] == "land":
         mosaic_type = "lnd_mosaic_file"
     elif gridstrings[0] == "none":
-        mosaic_type = "none";
+        mosaic_type = "none"
     else:
         if not mosaic_type:
             _log.critical((f"sourceGrid mosaic type '{gridstrings[0]}' not supported. "
@@ -1266,7 +1264,7 @@ def component_loop_setup(ppcNode, fre, pp, exp):
                     "to write to it's final location"))
                 sys.exit(1)
         else:
-            xyInterpRegridFile = f"{exp.ppRootDir}/{component}" + "/.fregrid_remap_file_${nlon}_by_${nlat}.nc";
+            xyInterpRegridFile = f"{exp.ppRootDir}/{component}" + "/.fregrid_remap_file_${nlon}_by_${nlat}.nc"
     else:
         _log.critical("xyInterp must specify a 'lat,lon' for regridding")
         sys.exit(1)
@@ -1471,11 +1469,11 @@ def timesaverages_setup(ppcNode, ta_freq, pp, exp, cpt):
 def add_timeaverage(pp, exp, cpt, ta_loop_tuple):
     """Common time average addition code."""
     taNode, ta_freq, intervals, ppcNode, annavnodes, annCalcInterval = ta_loop_tuple
-    int, subint, dep = ts_ta.get_subint(taNode, intervals)
+    int_, subint, dep = ts_ta.get_subint(taNode, intervals, pp.t0, cpt.sim0)
     if not subint:
-        _log.debug(f"\t{ta_freq} av int={int} subint=history")
+        _log.debug(f"\t{ta_freq} av int={int_} subint=history")
     else:
-        _log.debug(f"\t{ta_freq} av int={int} subint={subint}")
+        _log.debug(f"\t{ta_freq} av int={int_} subint={subint}")
     this_cshscript = ""
     if not pp.opt['A']:
         if ta_freq == 'annual':
@@ -1546,7 +1544,7 @@ def add_timeseries(pp, exp, cpt, ts_loop_tuple):
     else:
         raise ValueError(ts_freq)
 
-    cl, subchunk, dep = ts_ta.get_subint(tsNode, chunks)
+    cl, subchunk, dep = ts_ta.get_subint(tsNode, chunks, pp.t0, cpt.sim0)
     if not subchunk:
         _log.debug(f"\t{ts_freq} ts chunklength={cl} subchunk=history")
     else:
@@ -1576,7 +1574,7 @@ def component_loop_dependencies(pp, exp, cpt):
             return (pp, exp) # XXX
 
     #PROCESS DEPENDENCIES
-    depholds = "";
+    depholds = ""
     redothisyear = False
 
     if not pp.opt['A']:
@@ -1635,7 +1633,7 @@ def component_loop_dependencies(pp, exp, cpt):
                     return # XXX
                 else:
                     #check that jobid is still running
-                    jobrunning = logs.isjobrunning(depstate);
+                    jobrunning = logs.isjobrunning(depstate)
                     _log.info(f"Checking state of job {depstate}: jobrunning={jobrunning}")
                     if jobrunning:
                         _log.info((f"Required year {depyear} still working, placing a hold for "
@@ -1657,7 +1655,7 @@ def component_loop_dependencies(pp, exp, cpt):
                     _log.warning(f"Required year {depyear} missing. Use 'frepp -s' to submit with dependencies.")
 
             if redo:
-                cmd = sub.call_frepp(pp.abs_xml_path, exp.outscript, cpt.component, depyear)
+                cmd = sub.call_frepp(pp.abs_xml_path, exp.outscript, cpt.component, depyear, '', pp)
                 _log.info(f"cmd")
                 frepp_submit_output = util.shell(cmd, log=_log)
                 _log.info(f"frepp_submit_output")
@@ -1690,7 +1688,7 @@ def component_loop_dependencies(pp, exp, cpt):
         pp.opt['w'] = f" --dependency=afterok:{depholds}"
         _log.info(f"Setting holds for {pp.hDate}: {pp.opt['w']}")
 
-    cpt.cshscript += logs.mailcomponent();
+    cpt.cshscript += logs.mailcomponent()
 
     #CPIO
     if cpt.cpiomonTS and exp.aggregateTS:
@@ -1715,17 +1713,17 @@ def component_loop_dependencies(pp, exp, cpt):
             hf.sort()
             check_history = sub.checkHistComplete(exp.tmphistdir, hf[0], exp.this_frepp_cmd, hsmf, exp.diagtablecontent)
             cpt.cshscript = cpt.cshscript.replace("#check_history_files", check_history)
-        cpt.cshscript += sub.call_frepp(exp.abs_xml_path, exp.outscript, cpt.component, "")
-        cpt.cshscript += f"echo END-OF-SCRIPT for postprocessing job {pp.t0}-{pp.tEND} for {exp.expt}\n";
+        cpt.cshscript += sub.call_frepp(exp.abs_xml_path, exp.outscript, cpt.component, "", "", pp)
+        cpt.cshscript += f"echo END-OF-SCRIPT for postprocessing job {pp.t0}-{pp.tEND} for {exp.expt}\n"
 
         # if the user sets -W, don't override the wallclock even for 1-year postprocessing
-        if pp.maxyrs < 2 and not pp.opt['Walltime']:
+        if exp.maxyrs < 2 and not pp.opt['Walltime']:
             if pp.platform == 'x86_64':
                 cshscript = re.sub(r'(#SBATCH --time).*', r'\1=20:00:00/', cpt.cshscript)
-        if pp.maxyrs >= 20:
+        if exp.maxyrs >= 20:
             if pp.platform == 'x86_64':
                 cshscript = re.sub(r'(#SBATCH --time).*', rf"\1={pp.platform_opt['maxruntime']}", cshscript)
-        cpt.cshscript = re.sub(r'(#INFO:max_years=)', rf'\1{pp.maxyrs}', cpt.cshscript)
+        cpt.cshscript = re.sub(r'(#INFO:max_years=)', rf'\1{exp.maxyrs}', cpt.cshscript)
         writefinalstate = _template("""
 
             if ( \$errors_found == 0 ) then
@@ -1737,8 +1735,12 @@ def component_loop_dependencies(pp, exp, cpt):
             endif
         """, statefile=exp.statefile)
         if not pp.opt['A']:
-            sub.writescript(cshscript, writefinalstate, exp.outscript,
-                f"{pp.platform_opt['batchSubmit']}{pp.opt['w']} {pp.opt['m']}", exp.statefile)
+            sub.writescript(
+                cpt.cshscript + writefinalstate,
+                exp.outscript,
+                f"{pp.platform_opt['batchSubmit']}{pp.opt['w']} {pp.opt['m']}",
+                exp.statefile, pp
+            )
             pp.opt['w'] = ""
         # frepp.pl l.2436
     return (pp, exp)

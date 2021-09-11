@@ -82,6 +82,8 @@ class FREExperiment():
     statefile: str = ""
     frepp_plus_calls: list = dc.field(default_factory=list)
 
+    MDBIswitch: bool = False
+    maxyrs: int = 0 # XXX where is this set? in FRE()?
     aggregateTS: bool = True
 
     # NB: paths below are not necessarily the same as their *Dir counterparts above
