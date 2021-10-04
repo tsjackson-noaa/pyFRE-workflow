@@ -336,22 +336,22 @@ def setup_expt(expt, fre, pp):
     exp.tempCache = exp.workDir.split('/')[0] + "/tempCache"
     exp.statedir = os.path.join(exp.stateDir, "postProcess")
     exp.outscriptdir = os.path.join(exp.scriptsDir, "postProcess")
-    if pp.out['u']:
-        exp.outscriptdir = os.path.join(exp.outscriptdir, pp.out['u'])
-    if pp.out['O']:
-        exp.outscriptdir = pp.out['O']
+    if pp.opt['u']:
+        exp.outscriptdir = os.path.join(exp.outscriptdir, pp.opt['u'])
+    if pp.opt['O']:
+        exp.outscriptdir = pp.opt['O']
     if not (os.path.isdir(exp.outscriptdir) or pp.opt['A']):
         os.makedirs(exp.outscriptdir)
 
     if not (os.path.isdir(os.path.join(exp.stdoutDir, "postProcess")) or pp.opt['A']):
         os.makedirs(os.path.join(exp.stdoutDir, "postProcess"))
-    if pp.out['u']:
-        exp.statedir = os.path.join(exp.statedir, pp.out['u'])
+    if pp.opt['u']:
+        exp.statedir = os.path.join(exp.statedir, pp.opt['u'])
     if not (os.path.isdir(exp.statedir) or pp.opt['A']):
         os.makedirs(exp.statedir)
     exp.aoutscriptdir = os.path.join(exp.scriptsDir, "analysis")
-    if pp.out['O']:
-        exp.aoutscriptdir = pp.out['O']
+    if pp.opt['O']:
+        exp.aoutscriptdir = pp.opt['O']
     #     my $shortxml = $abs_xml_path;
     # $shortxml =~ s/.+\/(.+\.xml)(\.$expt\.o.+)?/$1/; # XXX
 
@@ -382,13 +382,13 @@ def setup_expt(expt, fre, pp):
     # fredb experiment
     if exp.MDBIswitch:
         fredb = shutil.which('fredb')
-        fredb_cmd = ["-x", pp.abs_xml_path, "-t", pp.opt['T'], "-p", pp.out['P'], expt]
+        fredb_cmd = ["-x", pp.abs_xml_path, "-t", pp.opt['T'], "-p", pp.opt['P'], expt]
         _log.warning(("Frepp no longer automatically ingests experiments into "
             f"Curator. You can do this manually by running: {fredb} {' '.join(fredb_cmd)}"))
     exp.refinedir = pp.opt['d'] + "_refineDiag"
     exp.ptmpDir = os.path.join(exp.ptmpDir, exp.archiveDir)
-    if bool(pp.out['u']):
-        exp.ptmpDir = os.path.join(exp.ptmpDir, pp.out['u'])
+    if bool(pp.opt['u']):
+        exp.ptmpDir = os.path.join(exp.ptmpDir, pp.opt['u'])
 
     # set whether to aggregate time series files in archive
     agg = FREUtil.getxpathval('postProcess/@archiveTimeSeries')

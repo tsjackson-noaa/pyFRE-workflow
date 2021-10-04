@@ -47,5 +47,7 @@ def all():
     return TARGET_STARTERS + TARGET_FOLLOWERS
 
 def allCombinations():
-    raise NotImplementedError()
+    res = []
+    nmbOfFollowers = len(TARGET_FOLLOWERS)
+    # XXX FINISH
 
