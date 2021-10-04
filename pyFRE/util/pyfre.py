@@ -5,12 +5,27 @@ import collections
 import re
 import string
 from textwrap import dedent
+import time
 
 from . import basic, processes, exceptions
+
+def is_readable(path):
+    """Check if filesystem says *path* is readable."""
+    return os.access(path, os.R_OK)
 
 def is_writable(path):
     """Check if filesystem says *path* is writable."""
     return os.access(path, os.W_OK)
+
+def unix_epoch():
+    """Seconds since 1 Jan 1970, equivalent of shell `date +%s`."""
+    return int(time.time())
+
+def regex_match(regex_, str_):
+    pass
+
+def regex_search():
+    pass
 
 def pl_template(cmds_template, *args, auto_escape_dollars=True, **kwargs):
     """Do perl-type string templating."""
