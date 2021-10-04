@@ -1,1 +1,0 @@
-../../mkmf/templates/linux-gnu.mk
